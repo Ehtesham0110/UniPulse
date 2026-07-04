@@ -1,0 +1,57 @@
+# Folder Structure
+
+```text
+unipulse/
+  apps/
+    mobile/
+      lib/
+        app/
+          app.dart
+          router/
+          theme/
+        core/
+          constants/
+          models/
+          network/
+          storage/
+          widgets/
+        features/
+          splash/
+          auth/
+          home/
+          events/
+          registration/
+          my_events/
+          qr_scanner/
+          certificates/
+          profile/
+          admin/
+    backend/
+      src/
+        app.js
+        server.js
+        config/
+        middleware/
+        modules/
+          auth/
+          colleges/
+          users/
+          clubs/
+          events/
+          teams/
+          registrations/
+          payments/
+          attendance/
+          certificates/
+          notifications/
+          admins/
+          analytics/
+          settings/
+        routes/
+        shared/
+          errors/
+          utils/
+          validators/
+  docs/
+```
+

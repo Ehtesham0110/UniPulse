@@ -1,0 +1,15 @@
+import { Router } from 'express';
+import { authRouter } from '../modules/auth/auth.routes.js';
+import { analyticsRouter } from '../modules/analytics/analytics.routes.js';
+import { clubRouter } from '../modules/clubs/club.routes.js';
+import { collegeRouter } from '../modules/colleges/college.routes.js';
+import { eventRouter } from '../modules/events/event.routes.js';
+
+export const apiRouter = Router();
+
+apiRouter.use('/auth', authRouter);
+apiRouter.use('/analytics', analyticsRouter);
+apiRouter.use('/clubs', clubRouter);
+apiRouter.use('/colleges', collegeRouter);
+apiRouter.use('/events', eventRouter);
+
