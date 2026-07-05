@@ -1,0 +1,70 @@
+import 'package:dio/dio.dart';
+
+import '../domain/registration_models.dart';
+
+/// Thrown for any failed registration action, carrying a message that's
+/// already safe and meaningful to show directly in the UI (duplicate
+/// registration, event full, invalid team size, registration closed, etc.)
+class RegistrationApiException implements Exception {
+  RegistrationApiException(this.message, {this.statusCode});
+  final String message;
+  final int? statusCode;
+  @override
+  String toString() => message;
+}
+
+class RegistrationApi {
+  RegistrationApi(this._dio);
+
+  final Dio _dio;
+
+  Future<String> register({
+    required String eventId,
+    String? teamName,
+    List<TeamMemberInput>? members,
+  }) async {
+    try {
+      final response = await _dio.post('/registrations', data: {
+        'eventId': eventId,
+        if (teamName != null) 'teamName': teamName,
+        if (members != null) 'members': members.map((m) => m.toJson()).toList(),
+      });
+      return response.data['data']['qrToken'] as String? ?? '';
+    } on DioException catch (error) {
+      throw RegistrationApiException(
+        _extractMessage(error),
+        statusCode: error.response?.statusCode,
+      );
+    }
+  }
+
+  Future<List<MyRegistration>> fetchMyRegistrations() async {
+    try {
+      final response = await _dio.get('/registrations/me');
+      final list = response.data['data'] as List<dynamic>;
+      return list
+          .map((item) => MyRegistration.fromJson(item as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (error) {
+      throw RegistrationApiException(_extractMessage(error));
+    }
+  }
+
+  Future<void> cancel(String registrationId) async {
+    try {
+      await _dio.patch('/registrations/$registrationId/cancel');
+    } on DioException catch (error) {
+      throw RegistrationApiException(_extractMessage(error));
+    }
+  }
+
+  String _extractMessage(DioException error) {
+    final backendMessage = error.response?.data?['message'] as String?;
+    if (backendMessage != null && backendMessage.isNotEmpty) return backendMessage;
+    if (error.type == DioExceptionType.connectionError ||
+        error.type == DioExceptionType.connectionTimeout) {
+      return 'Could not reach the server. Check your connection and try again.';
+    }
+    return 'Something went wrong. Please try again.';
+  }
+}

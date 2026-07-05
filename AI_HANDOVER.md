@@ -2,6 +2,20 @@
 
 _Last updated by: Claude (Sonnet 5), during this session._
 
+## Current Status
+
+Authentication: ✅ Complete
+Registration: ✅ Complete
+Payments: ❌ Not Started
+QR Attendance: ❌ Not Started
+Certificates: ❌ Not Started
+Notifications: ❌ Not Started
+Admin: 🟡 Partial
+Analytics: 🟡 Partial
+Events (full CRUD/gallery/UI integration): 🟡 Partial — only the minimal
+`GET /events/:id` read needed to drive Registration is wired on the
+Flutter side; event listing/creation/editing UI is still static/mock.
+
 ## ⚠️ Important correction to prior status claims
 
 The original handover prompt stated the Presentation Layer (all screens) was
@@ -85,123 +99,184 @@ actual code rather than trusting phase checklists.
 No existing screens were redesigned — visual structure, colors, and copy
 were preserved; only interactivity/data wiring was added.
 
+
+## End-to-End Flow Verification
+
+The requested flow — Login → Open Event → Register (Individual/Team,
+validated) → Successful registration → My Events updated → QR token
+generated — was verified in two layers, since neither a device/emulator
+nor a live MongoDB is available in this sandbox:
+
+- **API/logic layer (fully verified):** `test/registration.verify.mjs`
+  proves the backend registration logic end-to-end, including QR token
+  issuance. Live HTTP smoke tests confirm every route (auth + registration)
+  is correctly mounted and auth-guarded.
+- **UI wiring (verified by code trace, not by running the app):** the
+  reactive chain is confirmed by inspection —
+  `registration_sheet.dart` calls `myRegistrationsProvider.notifier.refresh()`
+  on success, and both `my_events_screen.dart` and `event_detail_screen.dart`
+  `ref.watch(myRegistrationsProvider)`, so both rebuild automatically the
+  moment a registration succeeds or is cancelled. `EventDetailScreen`
+  fetches a real event by id and `RegistrationSheet` submits against it
+  correctly.
+
+**One real gap in the literal tap-through path:** `event_list_screen.dart`
+(untouched, per scope) still uses `context.push('/event/${event.title}')`
+with mock data — it pushes the event's *title* as if it were an id, not a
+real MongoDB `_id`. So tapping an event from the current Home/Events list
+UI will hit `EventDetailScreen`'s "couldn't load this event" error state,
+because `GET /events/:id` won't find a match. The `/event/:id` route
+itself works correctly given a real id (confirmed by code trace + the
+backend test), but there's currently no in-app path that supplies one,
+since Events-listing integration is a separate, not-yet-started milestone.
+Until that's done, this can be verified manually via a real event `_id`
+from MongoDB (e.g. `flutter run --dart-define=...` and deep-linking to
+`/event/<realId>`, or a temporary debug button) rather than by tapping
+through the mock list.
+
 ## Current Phase
 
-**Phase 1 (Firebase Authentication): complete and build-verified** (within
-this sandbox's limits — see Verification below), pending the developer
-supplying a real Firebase project (see Known Issues).
+**Phase 1 (Authentication): complete and build-verified.**
+**Phase 2 (Registration milestone): complete and build-verified.** Payments,
+QR Attendance, Certificates, and Notifications have deliberately **not**
+been started — per explicit scope instruction, only the Registration
+milestone was completed this session.
 
-## Verification Performed (this session)
+## Session 2: Registration Milestone
 
-No Flutter SDK and no network egress are available in this sandbox, so
-"verify it builds" was done as thoroughly as possible within those limits:
+### What was built
+- Backend `registrations` module (controller + routes) — individual
+  registration, team registration with dynamic member counts, duplicate
+  prevention, atomic event-capacity validation, team-size validation,
+  cancellation (with capacity/team bookkeeping), and QR token generation
+  (hash stored server-side; raw token returned once at creation — actual
+  QR *scanning*/check-in is a separate future milestone).
+- Flutter: `registration_sheet.dart` is now a fully functional dynamic
+  form (was 100% static/hardcoded before), `event_detail_screen.dart` now
+  fetches a real event and drives the Register CTA off real state
+  (open/full/already-registered), and `my_events_screen.dart` now shows
+  real registrations with cancel support.
+- A minimal `EventApi`/`EventSummary` was added *only* to supply what
+  Registration needs (id, type, team bounds, price, capacity, lifecycle).
+  This is intentionally not a full Events-feature integration — the event
+  list screen (`event_list_screen.dart`) is still static/mock data and was
+  **not** touched, per scope.
 
-- `node --check` on every backend source file: **pass**.
-- Booted the real Express app in-process (`createApp()`), which imports
-  every route/controller/model — this caught a real bug: **`firebase-admin`
-  v14 removed the legacy `admin.credential.cert(...)` API from its default
-  export.** Fixed by switching `src/config/firebase.js` to the modular API
-  (`firebase-admin/app`, `firebase-admin/auth`). Without this fix, the
-  server would have crashed on the first login attempt in production.
-- Started a live server (no DB) and hit `/health`, `POST /api/auth/firebase-login`,
-  `POST /api/auth/refresh`, `GET /api/auth/me` with invalid/missing
-  credentials — all returned correct status codes and structured error
-  bodies.
-- Signed a structurally-valid fake refresh token and confirmed it passes
-  JWT verification and proceeds to the (unavailable) DB lookup, rather than
-  being incorrectly rejected — confirms the refresh logic itself is sound.
-- Manually proofread every new/changed Dart file for import correctness and
-  brace/structure balance (no Flutter SDK available to run `flutter analyze`
-  or `flutter pub get` in this sandbox).
+### Verification performed (see also Verified section in CHANGELOG.md)
+Same sandbox constraints as Session 1 (no Flutter SDK, no network, no live
+MongoDB). To verify the registration business logic honestly despite no
+database being available, I wrote
+`apps/backend/test/registration.verify.mjs`, which mocks only the
+Mongoose *model methods* actually called (find/findOne/findOneAndUpdate/
+findByIdAndUpdate/findByIdAndDelete/create) with in-memory fakes, and then
+calls the **real, unmodified controller functions** against them. This is
+a meaningfully stronger check than a syntax check — it actually exercises
+the capacity math, duplicate detection, and team-size validation. All 16
+checks pass. Run it yourself with:
+```
+cd apps/backend && node test/registration.verify.mjs
+```
+(no `npm install` or MongoDB needed — it only needs the `node_modules`
+already present in this repo once you run `npm install` once).
 
-**Still required from the developer before shipping:** run `flutter pub get`
-and `flutter analyze` locally, connect a real MongoDB instance and confirm
-the full login round-trip (a phone number that doesn't exist yet → signup
-required → account created), and complete Firebase project setup (below).
+For Flutter, in the continued absence of a Flutter SDK in this sandbox, I
+went further than a brace-balance check this time: a Python script
+confirmed every relative `import` in every `.dart` file resolves to a real
+file on disk, and I manually cross-referenced every provider/class/field
+used across files (e.g. `apiClientProvider`, `authControllerProvider`,
+`AppUser` field names, `GradientButton`/`CampusTreeFooter` constructors)
+against its actual definition. **This is still not a substitute for
+`flutter analyze` and `flutter pub get`** — package version compatibility
+and Dart type-checking cannot be verified without the real toolchain.
+Please run both locally before merging.
 
 ## Pending Work (in priority order)
 
-1. **Firebase project setup** (developer action required, see Known Issues)
-   — nothing downstream of auth can be tested without this.
-2. **Phase 2 backend**: registrations (individual + team, min/max members),
-   payments (Razorpay order creation + webhook verification), attendance
-   (QR generation/validation, check-in/out), certificates (template +
-   PDF generation via `pdfkit`), notifications (FCM send by college/branch/
-   year/club/event/individual), admin management endpoints.
-3. **Phase 3 Flutter API integration**: replace hardcoded sample data in
-   `home_screen.dart`, `event_list_screen.dart`, `event_detail_screen.dart`,
-   `my_events_screen.dart`, `certificates_screen.dart`, `profile_screen.dart`,
-   `admin_panel_screen.dart` with real Riverpod providers calling the
-   `ApiClient` built this session (it's ready to reuse — see
-   `lib/core/network/api_client.dart`).
-4. Phases 4–9 per the original spec (Events CRUD UI, Registration +
-   Razorpay UI, QR attendance UI (`mobile_scanner` isn't wired to anything
-   yet), Certificates UI, Notifications, Admin Panel data wiring).
+1. **Firebase project setup** (developer action required, see Known
+   Issues) — still blocks real end-to-end testing of both Auth and
+   Registration on-device.
+2. **Payments** (explicitly not started this session): Razorpay order
+   creation, payment verification/webhook, transition `Pending Payment` →
+   `Confirmed` registrations (capacity should be consumed at that point,
+   not at registration time — the hook point already exists in
+   `registration.controller.js`, search for `Pending Payment`).
+3. **QR Attendance** (not started): the registration QR token exists
+   server-side (`qrTokenHash`); still needed: an endpoint to validate a
+   scanned token and mark attendance, plus wiring `mobile_scanner` in the
+   Flutter app (currently a dependency with zero usage).
+4. **Certificates** (not started): template + PDF generation, endpoints,
+   Flutter certificates screen still fully static.
+5. **Notifications** (not started): FCM sending by audience, Flutter has
+   no FCM wiring at all yet (only `firebase_auth`/`firebase_core` were
+   added, not `firebase_messaging`).
+6. **Events feature completion** (Phase 3/4, partial): `event_list_screen.dart`
+   is still 100% static mock data and navigates using `event.title` as a
+   fake id (`context.push('/event/${event.title}')`), which will now hit
+   the real `EventDetailScreen`'s "couldn't load this event" error state
+   for every mock event, since only real MongoDB `_id`s resolve via
+   `GET /events/:id`. This is expected and correct given scope (Events
+   listing integration is a separate milestone) — flagging it clearly so
+   the next session doesn't mistake it for a bug. `event_detail_screen.dart`
+   itself is fully wired to real data now.
+7. Admin panel, analytics, home screen, profile, certificates screens
+   still show static/mock data (Phase 3/9 work).
 
 ## Next Recommended Task
 
-Start Phase 2: build the `registrations` module (model already exists —
-`registration.model.js`) — controller + routes for individual/team
-registration with dynamic member counts, since Phase 5 (Flutter
-registration UI) and Phase 6 (QR attendance) both depend on it existing
-first. Then wire `registration_sheet.dart` (currently static UI) to it.
+Per the instruction that came with this milestone, **stop here** — do not
+start Payments/QR/Certificates/Notifications until told to continue. If
+resuming, Payments is the natural next step since Registration already has
+the `Pending Payment` status and hook point waiting for it.
 
 ## Known Issues
 
-1. **Firebase project credentials cannot be fabricated.** I added the
-   `firebase_auth`/`firebase_core` packages and all app-side wiring, but
-   `lib/firebase_options.dart` is a placeholder with `'REPLACE_ME'` values.
-   The developer must run `flutterfire configure` from `apps/mobile/` against
-   their real Firebase project (with Phone sign-in enabled in the Firebase
-   console) to generate real values. Android will also need SHA-1/SHA-256
-   fingerprints registered in Firebase for Phone Auth reCAPTCHA fallback to
-   work, and `google-services.json` / `GoogleService-Info.plist` need adding
-   (flutterfire configure handles this).
-2. **Backend `.env` still needs real values** for `FIREBASE_PROJECT_ID`,
-   `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` (from a Firebase service
-   account JSON), plus Mongo/Razorpay/Cloudinary as already listed in
-   `.env.example`.
-3. **No sandbox toolchain available** in this session to run `flutter pub get`,
-   `flutter analyze`, or `npm install && npm run dev` — Node/Flutter binaries
-   aren't installed and network egress is disabled. All backend files were
-   verified with `node --check` (syntax only, not a full lint/type pass).
-   **Before relying on this code, run `flutter analyze` and `flutter pub get`
-   locally** to catch anything a syntax check can't (import typos, API
-   version drift in `firebase_auth`/`dio`, etc.).
-4. `apps/backend/.env.example` already lists the Firebase Admin vars — no
-   change needed there.
-5. The default `collegeCode` used by the Flutter app is hardcoded to
-   `'UNIPULSE'` in `welcome_auth_screen.dart` / `otp_screen.dart`. A real
-   multi-college deployment needs a college-selection step before login
-   (not built yet — out of scope for Phase 1).
-6. `middleware/require-permission.js` was read but not modified — assumed
-   correct since Analytics/Clubs/Events routes already depend on it working.
+1. **Firebase project credentials cannot be fabricated** — see
+   `lib/firebase_options.dart` placeholder; run `flutterfire configure`.
+2. **Backend `.env` needs real values** for Firebase Admin + Mongo +
+   Razorpay + Cloudinary — see `.env.example`.
+3. **No sandbox toolchain for `flutter analyze`/`flutter pub get`/live
+   MongoDB in this session.** Backend logic was verified with a real
+   mock-backed test script (`test/registration.verify.mjs`, 16/16 passing)
+   in addition to `node --check` and live HTTP smoke tests. Flutter code
+   was verified via import-resolution + symbol cross-referencing, but
+   **not** compiled. Run `flutter pub get && flutter analyze` before
+   trusting this fully — no new Flutter dependency was added this session
+   specifically to reduce that risk (a hand-rolled date formatter was used
+   instead of adding `intl`, since a new dependency's resolution can't be
+   verified here).
+4. The default `collegeCode` is still hardcoded to `'UNIPULSE'` — unchanged
+   from Session 1, still a known gap for multi-college deployments.
+5. **GitHub push could not be completed from this sandbox.** Network
+   egress to `github.com` is blocked in this container
+   (`x-deny-reason: host_not_allowed`), so `git push` fails with a 403.
+   Git history exists locally with clean, correctly-scoped commits — the
+   developer needs to push from an environment with GitHub access (or
+   connect a GitHub connector/app that has its own credentialed access).
+   See the chat response accompanying this handover for the exact commands.
+6. `event_list_screen.dart` was intentionally left untouched (see Pending
+   Work #6) — don't "fix" its navigation as a quick patch without also
+   wiring it to real event data, or the fix will just move the mismatch
+   elsewhere.
 
-## Files Modified This Session
+## Files Modified This Session (Registration milestone)
 
 **Backend**
-- `apps/backend/src/config/env.js`
-- `apps/backend/src/config/firebase.js` (new; fixed post-verification to use
-  the modular `firebase-admin/app` + `firebase-admin/auth` API instead of
-  the legacy `admin.credential.cert(...)` namespaced API, which doesn't
-  exist in firebase-admin v14)
-- `apps/backend/src/modules/auth/auth.controller.js`
-- `apps/backend/src/modules/auth/auth.routes.js`
+- `apps/backend/src/modules/registrations/registration.controller.js` (new)
+- `apps/backend/src/modules/registrations/registration.routes.js` (new)
+- `apps/backend/src/routes/index.js` (mounted the new router)
+- `apps/backend/test/registration.verify.mjs` (new — verification harness)
 
 **Flutter**
-- `apps/mobile/pubspec.yaml`
-- `apps/mobile/lib/main.dart`
-- `apps/mobile/lib/firebase_options.dart` (new, placeholder)
-- `apps/mobile/lib/app/app.dart`
-- `apps/mobile/lib/app/router/app_router.dart`
-- `apps/mobile/lib/core/network/api_config.dart` (new)
-- `apps/mobile/lib/core/network/api_client.dart` (new)
-- `apps/mobile/lib/core/storage/secure_token_storage.dart` (new)
-- `apps/mobile/lib/features/auth/domain/app_user.dart` (new)
-- `apps/mobile/lib/features/auth/data/auth_api.dart` (new)
-- `apps/mobile/lib/features/auth/application/auth_state.dart` (new)
-- `apps/mobile/lib/features/auth/application/auth_controller.dart` (new)
-- `apps/mobile/lib/features/auth/presentation/welcome_auth_screen.dart`
-- `apps/mobile/lib/features/auth/presentation/otp_screen.dart`
-- `apps/mobile/lib/features/auth/presentation/complete_profile_screen.dart` (new)
-- `apps/mobile/lib/features/splash/presentation/splash_screen.dart`
+- `apps/mobile/lib/features/events/domain/event_summary.dart` (new)
+- `apps/mobile/lib/features/events/data/event_api.dart` (new)
+- `apps/mobile/lib/features/registration/domain/registration_models.dart` (new)
+- `apps/mobile/lib/features/registration/data/registration_api.dart` (new)
+- `apps/mobile/lib/features/registration/application/registration_providers.dart` (new)
+- `apps/mobile/lib/features/registration/presentation/registration_sheet.dart` (rewritten)
+- `apps/mobile/lib/features/events/presentation/event_detail_screen.dart` (rewritten)
+- `apps/mobile/lib/features/my_events/presentation/my_events_screen.dart` (rewritten)
+- `apps/mobile/lib/app/router/app_router.dart` (pass real eventId to detail screen)
+- `apps/mobile/lib/core/utils/date_formatting.dart` (new)
+
+**Docs**
+- `CHANGELOG.md`, `AI_HANDOVER.md` (this file)

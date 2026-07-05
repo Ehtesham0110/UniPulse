@@ -79,7 +79,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/event/:id',
-        builder: (context, state) => const EventDetailScreen(),
+        builder: (context, state) => EventDetailScreen(
+          eventId: state.pathParameters['id'] ?? '',
+        ),
       ),
       GoRoute(
         path: '/admin',

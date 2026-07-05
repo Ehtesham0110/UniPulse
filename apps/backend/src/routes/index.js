@@ -4,6 +4,7 @@ import { analyticsRouter } from '../modules/analytics/analytics.routes.js';
 import { clubRouter } from '../modules/clubs/club.routes.js';
 import { collegeRouter } from '../modules/colleges/college.routes.js';
 import { eventRouter } from '../modules/events/event.routes.js';
+import { registrationRouter } from '../modules/registrations/registration.routes.js';
 
 export const apiRouter = Router();
 
@@ -12,4 +13,5 @@ apiRouter.use('/analytics', analyticsRouter);
 apiRouter.use('/clubs', clubRouter);
 apiRouter.use('/colleges', collegeRouter);
 apiRouter.use('/events', eventRouter);
+apiRouter.use('/registrations', registrationRouter);
 
