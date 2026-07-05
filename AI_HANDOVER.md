@@ -6,15 +6,13 @@ _Last updated by: Claude (Sonnet 5), during this session._
 
 Authentication: ✅ Complete
 Registration: ✅ Complete
+Events: ✅ Complete
 Payments: ❌ Not Started
 QR Attendance: ❌ Not Started
 Certificates: ❌ Not Started
 Notifications: ❌ Not Started
 Admin: 🟡 Partial
 Analytics: 🟡 Partial
-Events (full CRUD/gallery/UI integration): 🟡 Partial — only the minimal
-`GET /events/:id` read needed to drive Registration is wired on the
-Flutter side; event listing/creation/editing UI is still static/mock.
 
 ## ⚠️ Important correction to prior status claims
 
@@ -137,10 +135,135 @@ through the mock list.
 ## Current Phase
 
 **Phase 1 (Authentication): complete and build-verified.**
-**Phase 2 (Registration milestone): complete and build-verified.** Payments,
+**Phase 2 (Registration milestone): complete and build-verified.**
+**Phase 3 (Events milestone): complete and build-verified.** Payments,
 QR Attendance, Certificates, and Notifications have deliberately **not**
-been started — per explicit scope instruction, only the Registration
-milestone was completed this session.
+been started — per explicit scope instruction, only the Events milestone
+was completed this session.
+
+## Session 3: Events Milestone
+
+### What was built
+**Backend** — `event.controller.js` extended from a partial CRUD
+(list/get/create/approve, no validation, no search, no bookmarks) to a
+complete module:
+- `PATCH /api/events/:eventId` (new) — update, permission-gated (Admin/
+  Super Admin always; Organizer only if they created or are assigned to
+  the event), with the same validation as create (partial) and a
+  protected-fields list so a request body can't overwrite `collegeId`,
+  `createdBy`, `currentParticipants`, `approval`, `slug`, or `_id`.
+- `DELETE /api/events/:eventId` (new) — Admin/Super Admin only; refuses to
+  delete an event that already has registrations (409).
+- `POST /api/events/:eventId/bookmark` (new) — toggles the bookmark using
+  the `user.bookmarks` field that already existed in the schema but had
+  no endpoint.
+- `listEvents` — added `search` (case-insensitive title/description
+  regex), `bookmarked=true` filter, and default lifecycle visibility so
+  students don't see Draft/Pending Approval/Cancelled events unless
+  they're the organizer/admin.
+- `getEvent` — added `isBookmarked`, and hides restricted-lifecycle events
+  from students with a 404 (not 403 — doesn't confirm the event exists).
+- `createEvent` — added real payload validation (was previously just
+  spreading `req.body` into `Event.create` and hoping Mongoose's raw
+  validation error was good enough) and a `clubId` existence/ownership
+  check.
+
+**Flutter** — replaced every remaining mock event data source:
+- `EventSummary` extended to carry full detail (gallery, schedule,
+  organizer, highlights, rules, isBookmarked) so the detail screen loads
+  entirely from one backend response.
+- New `features/events/application/event_providers.dart` — `eventListProvider`
+  (family-keyed by category + search) alongside the existing
+  `eventApiProvider`/`eventDetailProvider` (moved here from the
+  registration module, now that Events is a first-class feature;
+  `registration_providers.dart` re-exports them so nothing else needed to
+  change its imports).
+- `home_screen.dart` — real user greeting + up to 3 real upcoming events
+  with loading/error/empty states, replacing the single hardcoded
+  "HackVerse 3.0" card.
+- `event_list_screen.dart` — fully backend-driven: category filter,
+  debounced search wired to the backend, client-side All/Upcoming/Past
+  filter, loading/error/empty states, and — importantly — cards now
+  navigate using the event's **real MongoDB `_id`**, fixing the gap
+  flagged in the Session 2 handover (it previously pushed the event's
+  *title* as a fake id).
+- `event_detail_screen.dart` — Highlights/Schedule/Gallery/Organizer
+  sections now render from real backend data when present, and the
+  bookmark button actually works.
+
+### Bugs found and fixed during verification
+1. **Slug collision crash:** `slugify(title)` alone, with a unique index
+   on `collegeId+slug`, meant two events with the same title in a college
+   would crash `createEvent` with a raw MongoDB E11000 error instead of a
+   clean response. Fixed by appending a timestamp + random suffix — the
+   mock test suite actually caught the timestamp-only version of this fix
+   colliding when two creates happened in the same millisecond, which is
+   exactly the kind of bug this verification approach is for.
+2. **Broken string interpolation in Flutter:** `'Search $widget.category
+   events…'` — bare `$name` interpolation doesn't reach through property
+   access, so this would have rendered as the widget's `toString()` plus
+   the literal text `.category events…`. Fixed to
+   `'Search ${widget.category} events…'`. Caught by manual review, not a
+   tool — another reminder that `flutter analyze` still needs to be run
+   for anything this kind of review can miss.
+
+### Verification performed
+Same sandbox constraints as prior sessions (no Flutter SDK, no network, no
+live MongoDB). `apps/backend/test/events.verify.mjs` was written using the
+same mock-model approach as the Registration milestone's test, and
+exercises the real, unmodified controller functions: **23/23 checks
+pass**, covering validation, the slug-collision fix, default lifecycle
+visibility (student vs. organizer), category filtering, search, invalid-
+category rejection, draft-event hiding, bookmark toggling and its
+reflection in `getEvent`, update permissions (student denied / owner
+allowed / admin override), partial-update validation, and delete guarded
+by existing registrations. `test/registration.verify.mjs` was re-run
+afterward with no regressions (16/16). Combined: **39/39 backend checks
+pass.** Live HTTP smoke tests confirm all event routes (list with
+category/search/bookmarked query params, get, create, update, delete,
+approve, bookmark) are correctly mounted and auth-guarded.
+
+For Flutter: still no SDK available in this sandbox to run `flutter pub
+get`/`flutter analyze`. The same manual verification discipline as prior
+sessions was applied — every relative import/export resolves to a real
+file, every cross-file symbol was checked against its actual definition —
+and this pass is what caught the string-interpolation bug above. No new
+pub dependency was added (gallery images use `Image.network`, already
+built into Flutter). **This still is not a substitute for the real
+toolchain — please run `flutter pub get && flutter analyze` before
+merging**, since Dart's type checker and package resolver can catch
+classes of error (type mismatches, null-safety violations, version
+incompatibilities) that manual review cannot.
+
+## Pending Work (in priority order)
+
+1. **Firebase project setup** (developer action required, unchanged from
+   prior sessions) — still blocks on-device testing of everything.
+2. **Payments** (not started): Razorpay integration, `Pending Payment` →
+   `Confirmed` transition (hook point exists in
+   `registration.controller.js`).
+3. **QR Attendance** (not started).
+4. **Certificates** (not started).
+5. **Notifications** (not started).
+6. **Events — remaining gaps** (deliberately out of scope this session):
+   - No event **creation/editing UI** in Flutter — the backend fully
+     supports it (`POST`/`PATCH /api/events`), but no organizer-facing
+     form exists yet. This would naturally live in the Admin Panel.
+   - No **image upload** — `media.galleryUrls`/`bannerUrl`/`thumbnailUrl`
+     are stored and displayed if present, but there's no Cloudinary
+     upload flow yet (no Cloudinary credentials configured either — see
+     Known Issues).
+   - No dedicated "My Bookmarks" screen — bookmarking works (toggle +
+     persisted + reflected everywhere), but there's no screen listing
+     just bookmarked events yet (the backend supports it via
+     `?bookmarked=true`).
+   - Admin panel and analytics screens still show static/mock data —
+     untouched, per scope (Phase 9 work).
+
+## Next Recommended Task
+
+Per the instruction that came with this milestone, **stop here**. If
+resuming, Payments is the natural next step (see Pending Work #2).
 
 ## Session 2: Registration Milestone
 
@@ -190,44 +313,6 @@ against its actual definition. **This is still not a substitute for
 and Dart type-checking cannot be verified without the real toolchain.
 Please run both locally before merging.
 
-## Pending Work (in priority order)
-
-1. **Firebase project setup** (developer action required, see Known
-   Issues) — still blocks real end-to-end testing of both Auth and
-   Registration on-device.
-2. **Payments** (explicitly not started this session): Razorpay order
-   creation, payment verification/webhook, transition `Pending Payment` →
-   `Confirmed` registrations (capacity should be consumed at that point,
-   not at registration time — the hook point already exists in
-   `registration.controller.js`, search for `Pending Payment`).
-3. **QR Attendance** (not started): the registration QR token exists
-   server-side (`qrTokenHash`); still needed: an endpoint to validate a
-   scanned token and mark attendance, plus wiring `mobile_scanner` in the
-   Flutter app (currently a dependency with zero usage).
-4. **Certificates** (not started): template + PDF generation, endpoints,
-   Flutter certificates screen still fully static.
-5. **Notifications** (not started): FCM sending by audience, Flutter has
-   no FCM wiring at all yet (only `firebase_auth`/`firebase_core` were
-   added, not `firebase_messaging`).
-6. **Events feature completion** (Phase 3/4, partial): `event_list_screen.dart`
-   is still 100% static mock data and navigates using `event.title` as a
-   fake id (`context.push('/event/${event.title}')`), which will now hit
-   the real `EventDetailScreen`'s "couldn't load this event" error state
-   for every mock event, since only real MongoDB `_id`s resolve via
-   `GET /events/:id`. This is expected and correct given scope (Events
-   listing integration is a separate milestone) — flagging it clearly so
-   the next session doesn't mistake it for a bug. `event_detail_screen.dart`
-   itself is fully wired to real data now.
-7. Admin panel, analytics, home screen, profile, certificates screens
-   still show static/mock data (Phase 3/9 work).
-
-## Next Recommended Task
-
-Per the instruction that came with this milestone, **stop here** — do not
-start Payments/QR/Certificates/Notifications until told to continue. If
-resuming, Payments is the natural next step since Registration already has
-the `Pending Payment` status and hook point waiting for it.
-
 ## Known Issues
 
 1. **Firebase project credentials cannot be fabricated** — see
@@ -235,15 +320,16 @@ the `Pending Payment` status and hook point waiting for it.
 2. **Backend `.env` needs real values** for Firebase Admin + Mongo +
    Razorpay + Cloudinary — see `.env.example`.
 3. **No sandbox toolchain for `flutter analyze`/`flutter pub get`/live
-   MongoDB in this session.** Backend logic was verified with a real
-   mock-backed test script (`test/registration.verify.mjs`, 16/16 passing)
-   in addition to `node --check` and live HTTP smoke tests. Flutter code
-   was verified via import-resolution + symbol cross-referencing, but
-   **not** compiled. Run `flutter pub get && flutter analyze` before
-   trusting this fully — no new Flutter dependency was added this session
-   specifically to reduce that risk (a hand-rolled date formatter was used
-   instead of adding `intl`, since a new dependency's resolution can't be
-   verified here).
+   MongoDB in any session so far.** Backend logic is verified with
+   mock-backed test scripts (`test/registration.verify.mjs` 16/16,
+   `test/events.verify.mjs` 23/23 — 39/39 combined) plus `node --check`
+   and live HTTP smoke tests every session. Flutter code is verified via
+   import/export-resolution + manual symbol cross-referencing each
+   session (this caught a real broken-string-interpolation bug in Session
+   3 — see CHANGELOG.md), but is **not** compiled. Run
+   `flutter pub get && flutter analyze` before trusting this fully — no
+   new Flutter dependency has been added in any session specifically to
+   reduce that risk.
 4. The default `collegeCode` is still hardcoded to `'UNIPULSE'` — unchanged
    from Session 1, still a known gap for multi-college deployments.
 5. **GitHub push could not be completed from this sandbox.** Network
@@ -252,31 +338,43 @@ the `Pending Payment` status and hook point waiting for it.
    Git history exists locally with clean, correctly-scoped commits — the
    developer needs to push from an environment with GitHub access (or
    connect a GitHub connector/app that has its own credentialed access).
-   See the chat response accompanying this handover for the exact commands.
-6. `event_list_screen.dart` was intentionally left untouched (see Pending
-   Work #6) — don't "fix" its navigation as a quick patch without also
-   wiring it to real event data, or the fix will just move the mismatch
-   elsewhere.
+6. **No event creation/editing UI, no image upload flow, no dedicated
+   bookmarks screen** — see Pending Work above (Events — remaining gaps).
+   The backend fully supports all three; only the Flutter screens don't
+   exist yet.
 
-## Files Modified This Session (Registration milestone)
+## Files Modified (cumulative — see CHANGELOG.md for the authoritative
+per-session breakdown)
 
-**Backend**
+**Session 3 (Events milestone)**
+- `apps/backend/src/modules/events/event.controller.js` (extended: update,
+  delete, bookmark, search, visibility rules, validation)
+- `apps/backend/src/modules/events/event.routes.js` (new routes wired)
+- `apps/backend/test/events.verify.mjs` (new — verification harness, 23/23)
+- `apps/mobile/lib/features/events/domain/event_summary.dart` (extended)
+- `apps/mobile/lib/features/events/data/event_api.dart` (extended:
+  `listEvents`, `toggleBookmark`)
+- `apps/mobile/lib/features/events/application/event_providers.dart` (new)
+- `apps/mobile/lib/features/registration/application/registration_providers.dart`
+  (slimmed to re-export event providers from their new home)
+- `apps/mobile/lib/features/home/presentation/home_screen.dart` (rewritten)
+- `apps/mobile/lib/features/events/presentation/event_list_screen.dart` (rewritten)
+- `apps/mobile/lib/features/events/presentation/event_detail_screen.dart`
+  (extended: gallery/schedule/organizer/highlights, working bookmark button)
+- `CHANGELOG.md`, `AI_HANDOVER.md` (this file)
+
+**Session 2 (Registration milestone)**
 - `apps/backend/src/modules/registrations/registration.controller.js` (new)
 - `apps/backend/src/modules/registrations/registration.routes.js` (new)
 - `apps/backend/src/routes/index.js` (mounted the new router)
 - `apps/backend/test/registration.verify.mjs` (new — verification harness)
-
-**Flutter**
-- `apps/mobile/lib/features/events/domain/event_summary.dart` (new)
-- `apps/mobile/lib/features/events/data/event_api.dart` (new)
 - `apps/mobile/lib/features/registration/domain/registration_models.dart` (new)
 - `apps/mobile/lib/features/registration/data/registration_api.dart` (new)
-- `apps/mobile/lib/features/registration/application/registration_providers.dart` (new)
 - `apps/mobile/lib/features/registration/presentation/registration_sheet.dart` (rewritten)
-- `apps/mobile/lib/features/events/presentation/event_detail_screen.dart` (rewritten)
 - `apps/mobile/lib/features/my_events/presentation/my_events_screen.dart` (rewritten)
 - `apps/mobile/lib/app/router/app_router.dart` (pass real eventId to detail screen)
 - `apps/mobile/lib/core/utils/date_formatting.dart` (new)
 
-**Docs**
-- `CHANGELOG.md`, `AI_HANDOVER.md` (this file)
+**Session 1 (Authentication milestone)** — see earlier sections of this
+file for the full list; unchanged since Session 1 and not repeated here.
+

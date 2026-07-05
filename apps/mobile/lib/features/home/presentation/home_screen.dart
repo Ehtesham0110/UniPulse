@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/utils/date_formatting.dart';
 import '../../../core/widgets/campus_tree_footer.dart';
+import '../../auth/application/auth_controller.dart';
+import '../../events/application/event_providers.dart';
+import '../../events/data/event_api.dart';
+import '../../events/domain/event_summary.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authControllerProvider).user;
+    final highlightsAsync = ref.watch(eventListProvider(const EventListQuery()));
+
     return SafeArea(
       child: Stack(
         children: [
@@ -62,9 +71,9 @@ class HomeScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Hey, Ehtesham',
-                          style: TextStyle(
+                        Text(
+                          user != null ? 'Hey, ${user.fullName.split(' ').first}' : 'Hey there',
+                          style: const TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w700,
                           ),
@@ -72,12 +81,13 @@ class HomeScreen extends StatelessWidget {
                         const SizedBox(height: 6),
                         Wrap(
                           spacing: 10,
-                          children: const [
+                          children: [
                             Text(
-                              'Second Year, ECS',
-                              style: TextStyle(color: Color(0xFF65687A)),
+                              user != null ? '${_yearLabel(user.year)}, ${user.branch}' : '',
+                              style: const TextStyle(color: Color(0xFF65687A)),
                             ),
-                            _RollBadge(),
+                            if (user != null && user.rollNumber.isNotEmpty)
+                              _RollBadge(rollNumber: user.rollNumber),
                           ],
                         ),
                       ],
@@ -102,7 +112,7 @@ class HomeScreen extends StatelessWidget {
                     child: _CategoryCard(
                       label: 'Non Tech\nEvents',
                       subtitle: 'Fun. Creative.\nBeyond Tech.',
-                      color: Color(0xFFFFE7A3),
+                      color: const Color(0xFFFFE7A3),
                       icon: Icons.emoji_events_rounded,
                       onTap: () => context.push('/events/Non Tech'),
                     ),
@@ -112,7 +122,7 @@ class HomeScreen extends StatelessWidget {
                     child: _CategoryCard(
                       label: 'Tech\nEvents',
                       subtitle: 'Innovate. Build.\nCompete.',
-                      color: Color(0xFFDCC5FF),
+                      color: const Color(0xFFDCC5FF),
                       icon: Icons.code_rounded,
                       onTap: () => context.push('/events/Tech'),
                     ),
@@ -120,28 +130,52 @@ class HomeScreen extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 32),
-              Row(
-                children: const [
-                  Expanded(
-                    child: Text(
-                      'Upcoming Highlights',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    'View all',
-                    style: TextStyle(
-                      color: Color(0xFFFF5A1A),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
+              const Text(
+                'Upcoming Highlights',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 16),
-              const _HighlightCard(),
+              highlightsAsync.when(
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (error, _) => Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: const Text(
+                    'Could not load upcoming events right now.',
+                    style: TextStyle(color: Color(0xFF696C7E)),
+                  ),
+                ),
+                data: (events) {
+                  final upcoming = events.take(3).toList();
+                  if (upcoming.isEmpty) {
+                    return Container(
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: const Text(
+                        'No upcoming events yet — check back soon!',
+                        style: TextStyle(color: Color(0xFF696C7E)),
+                      ),
+                    );
+                  }
+                  return Column(
+                    children: [
+                      for (final event in upcoming) ...[
+                        _HighlightCard(event: event),
+                        const SizedBox(height: 14),
+                      ],
+                    ],
+                  );
+                },
+              ),
             ],
           ),
           const Positioned(
@@ -154,10 +188,26 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
+
+  String _yearLabel(int year) {
+    switch (year) {
+      case 1:
+        return 'First Year';
+      case 2:
+        return 'Second Year';
+      case 3:
+        return 'Third Year';
+      case 4:
+        return 'Fourth Year';
+      default:
+        return 'Year $year';
+    }
+  }
 }
 
 class _RollBadge extends StatelessWidget {
-  const _RollBadge();
+  const _RollBadge({required this.rollNumber});
+  final String rollNumber;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -166,10 +216,9 @@ class _RollBadge extends StatelessWidget {
           color: const Color(0xFFD9F8D9),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: const Text(
-          'VU3F2526129',
-          style:
-              TextStyle(color: Color(0xFF22A33A), fontWeight: FontWeight.w700),
+        child: Text(
+          rollNumber,
+          style: const TextStyle(color: Color(0xFF22A33A), fontWeight: FontWeight.w700),
         ),
       );
 }
@@ -222,18 +271,23 @@ class _CategoryCard extends StatelessWidget {
   }
 }
 
-class _HighlightCard extends StatelessWidget {
-  const _HighlightCard();
+class _HighlightCard extends ConsumerWidget {
+  const _HighlightCard({required this.event});
+  final EventSummary event;
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final dateLabel = event.eventDate != null ? formatEventDate(event.eventDate!) : 'Date TBA';
+
+    return GestureDetector(
+      onTap: () => context.push('/event/${event.id}'),
+      child: Container(
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(22),
           boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.07), blurRadius: 18),
+            BoxShadow(color: Colors.black.withValues(alpha: 0.07), blurRadius: 18),
           ],
         ),
         child: Row(
@@ -245,37 +299,42 @@ class _HighlightCard extends StatelessWidget {
                 color: const Color(0xFFFFF0CE),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Center(
-                child: Text(
-                  'MAY\n24',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+              child: Center(
+                child: Icon(
+                  event.isTech ? Icons.laptop_mac_rounded : Icons.emoji_events_rounded,
+                  color: const Color(0xFFFF851A),
+                  size: 36,
                 ),
               ),
             ),
             const SizedBox(width: 18),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'HackVerse 3.0',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+                    event.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                   ),
-                  SizedBox(height: 8),
-                  Text('24 May, 2025  |  10:00 AM'),
-                  SizedBox(height: 6),
-                  Text('Seminar Hall'),
-                  SizedBox(height: 10),
-                  Text(
-                    'Innovation starts here. Are you in?',
-                    style: TextStyle(color: Color(0xFF65687A)),
-                  ),
+                  const SizedBox(height: 8),
+                  Text('$dateLabel  |  ${event.startTime.isEmpty ? 'TBA' : event.startTime}'),
+                  const SizedBox(height: 6),
+                  Text(event.venue),
                 ],
               ),
             ),
-            const Icon(Icons.bookmark_border_rounded),
+            IconButton(
+              icon: Icon(
+                event.isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+                color: event.isBookmarked ? const Color(0xFFFF6B1A) : null,
+              ),
+              onPressed: () => toggleEventBookmark(ref, event.id),
+            ),
           ],
         ),
-      );
+      ),
+    );
+  }
 }

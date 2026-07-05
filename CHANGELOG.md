@@ -4,7 +4,103 @@ All notable changes to UniPulse are documented in this file.
 
 ## [Unreleased]
 
-Nothing yet — Registration milestone is complete. See below for what's next.
+Nothing yet — Events milestone is complete. Payments is next (not started).
+
+## 2026-07-05 (3) — Events milestone: live events module complete
+
+### Added — Backend
+- `event.controller.js` extended to a full CRUD module:
+  - `PATCH /api/events/:eventId` (new): update an event. Allowed for
+    Admin/Super Admin (`MANAGE_EVENTS`) or the Organizer who created the
+    event / is assigned to it (`EDIT_ASSIGNED_EVENT`); rejects other
+    students with 403. Validates the same rules as create (partial —
+    only present fields are checked), re-validates `clubId` if changed,
+    and protects `collegeId`/`createdBy`/`currentParticipants`/`approval`/
+    `slug`/`_id` from being overwritten by the request body.
+  - `DELETE /api/events/:eventId` (new): Admin/Super Admin only. Refuses
+    to delete an event that already has registrations (409) — cancel it
+    instead.
+  - `POST /api/events/:eventId/bookmark` (new): toggles the current
+    user's bookmark on an event, using the `user.bookmarks` field that
+    already existed in the schema but had no endpoint wired to it.
+  - `listEvents` extended: `search` (case-insensitive regex over
+    title/description), `bookmarked=true` filter, and default lifecycle
+    visibility — students only see Published/Registration Open/
+    Registration Closed/Live/Completed/Archived events by default;
+    Draft/Pending Approval/Cancelled events are hidden unless the caller
+    is an Organizer/Admin (or explicitly filters by `lifecycle`).
+  - `getEvent` extended: returns `isBookmarked` for the current user, and
+    hides (404, not 403 — doesn't leak existence) Draft/Pending/Cancelled
+    events from students.
+  - `createEvent` now actually validates its payload (required fields,
+    category/eventType enums, valid date, team size bounds, price > 0 for
+    paid events) instead of relying on Mongoose to throw an unformatted
+    error, and verifies `clubId` references a real club in the caller's
+    college.
+- **Bug fixed:** event slug generation (`slugify(title)`) had no
+  uniqueness guarantee beyond the title itself, so two events with the
+  same title in a college would crash with a raw MongoDB duplicate-key
+  error (there's a unique index on `collegeId+slug`). Slugs now include a
+  timestamp + random suffix.
+- `apps/backend/test/events.verify.mjs` (new): mock-backed verification
+  harness (no live MongoDB in this sandbox) exercising the real,
+  unmodified controller functions. 23/23 checks pass.
+
+### Added — Flutter
+- `EventSummary` extended with full detail fields: `endTime`,
+  `isBookmarked`, `bannerUrl`/`thumbnailUrl`/`galleryUrls`, `highlights`,
+  `rules`, `schedule` (`EventScheduleItem`), and `organizer`
+  (`EventOrganizer`) — so the detail screen can render entirely from one
+  backend response.
+- `EventApi` extended with `listEvents(EventListQuery)` (category +
+  search) and `toggleBookmark(eventId)`.
+- New `features/events/application/event_providers.dart`: `eventListProvider`
+  (family-keyed by category+search), plus the previously-added
+  `eventApiProvider`/`eventDetailProvider` moved here from the
+  registration module now that Events is a first-class feature.
+  `registration_providers.dart` re-exports these so existing import sites
+  didn't need to change.
+- `home_screen.dart` (rewritten): real user greeting (name/year/branch/roll
+  from the authenticated session), and "Upcoming Highlights" now shows up
+  to 3 real upcoming events from the backend with loading/error/empty
+  states and working bookmark toggles, instead of one hardcoded card.
+- `event_list_screen.dart` (rewritten): backend-driven list filtered by
+  category, a debounced search box wired to the backend `search` param, a
+  client-side All/Upcoming/Past time filter, loading/error/empty states,
+  and cards that navigate using the event's **real MongoDB `_id`** —
+  this fixes the gap flagged in the previous milestone's handover, where
+  list navigation pushed the event's *title* as a fake id.
+- `event_detail_screen.dart`: now renders Highlights, Schedule, Gallery
+  (network images with a graceful broken-image fallback), and Organizer
+  sections from real backend data when present (previously static
+  placeholders), and the bookmark button is now functional.
+
+### Verified
+- All backend files pass `node --check`; full app boot with the extended
+  events router; live HTTP checks confirm every event route (list, get,
+  create, update, delete, approve, bookmark) is correctly mounted and
+  auth-guarded.
+- `apps/backend/test/events.verify.mjs`: 23/23 checks pass — validation
+  (empty payload, bad clubId, bad team size, unpaid-price-required),
+  duplicate-title slug collision handling, default lifecycle visibility
+  (student vs organizer), category filter, search, invalid category
+  rejection, draft-event 404 hiding, bookmark toggle + reflection in
+  `getEvent`, update permission (student denied / owner allowed / admin
+  override), partial-update validation, and delete guarded by existing
+  registrations.
+- `apps/backend/test/registration.verify.mjs` re-run after the events
+  changes: still 16/16 passing (no regression).
+- Flutter: every relative import/export verified to resolve to a real
+  file; every new/changed symbol (`EventSummary` fields, `EventListQuery`,
+  `toggleEventBookmark`, `AppUser` fields) manually cross-checked against
+  its definition. **`flutter analyze` and `flutter pub get` could not be
+  run** — no Flutter SDK is available in this sandbox. No new pub
+  dependency was added this session (gallery images use `Image.network`,
+  already built into Flutter). See `AI_HANDOVER.md` → Known Issues.
+- Manual review caught and fixed two real bugs before they shipped: a
+  broken string interpolation (`'Search $widget.category events…'` —
+  missing braces) in the search hint text, and the slug-collision issue
+  above.
 
 ## 2026-07-05 (2) — Phase 2 milestone: Registration complete
 

@@ -99,7 +99,12 @@ class _EventDetailBody extends ConsumerWidget {
                         icon: const Icon(Icons.arrow_back),
                       ),
                       const Spacer(),
-                      IconButton(onPressed: () {}, icon: const Icon(Icons.bookmark_border)),
+                      IconButton(
+                        onPressed: () => toggleEventBookmark(ref, event.id),
+                        icon: Icon(
+                          event.isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border,
+                        ),
+                      ),
                       IconButton(onPressed: () {}, icon: const Icon(Icons.share_rounded)),
                     ],
                   ),
@@ -150,6 +155,143 @@ class _EventDetailBody extends ConsumerWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(event.description.isEmpty ? 'No description provided yet.' : event.description),
+                  if (event.highlights.isNotEmpty) ...[
+                    const SizedBox(height: 26),
+                    const Text(
+                      'Highlights',
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 12),
+                    for (final highlight in event.highlights)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.star_rounded, size: 18, color: Color(0xFFFFAA00)),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(highlight)),
+                          ],
+                        ),
+                      ),
+                  ],
+                  if (event.schedule.isNotEmpty) ...[
+                    const SizedBox(height: 22),
+                    const Text(
+                      'Schedule',
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 12),
+                    for (final item in event.schedule)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: 74,
+                              child: Text(
+                                item.time,
+                                style: const TextStyle(fontWeight: FontWeight.w700, color: Color(0xFFFF6B1A)),
+                              ),
+                            ),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(item.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                                  if (item.description != null && item.description!.isNotEmpty)
+                                    Text(
+                                      item.description!,
+                                      style: const TextStyle(color: Color(0xFF696C7E)),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                  if (event.galleryUrls.isNotEmpty) ...[
+                    const SizedBox(height: 22),
+                    const Text(
+                      'Gallery',
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 100,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: event.galleryUrls.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 10),
+                        itemBuilder: (context, index) => ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: Image.network(
+                            event.galleryUrls[index],
+                            width: 100,
+                            height: 100,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              width: 100,
+                              height: 100,
+                              color: const Color(0xFFF3F3F7),
+                              child: const Icon(Icons.image_not_supported_outlined),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (event.organizer.hasInfo) ...[
+                    const SizedBox(height: 22),
+                    const Text(
+                      'Organizer',
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 14),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          const CircleAvatar(
+                            backgroundColor: Color(0xFFFFEAD5),
+                            child: Icon(Icons.person, color: Color(0xFFFF6B1A)),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (event.organizer.name != null)
+                                  Text(
+                                    event.organizer.name!,
+                                    style: const TextStyle(fontWeight: FontWeight.w700),
+                                  ),
+                                if (event.organizer.contactNumber != null)
+                                  Text(
+                                    event.organizer.contactNumber!,
+                                    style: const TextStyle(color: Color(0xFF696C7E)),
+                                  ),
+                                if (event.organizer.email != null)
+                                  Text(
+                                    event.organizer.email!,
+                                    style: const TextStyle(color: Color(0xFF696C7E)),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 26),
                   if (!canRegister)
                     Container(

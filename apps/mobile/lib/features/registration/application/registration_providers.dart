@@ -1,25 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/application/auth_controller.dart';
-import '../../events/data/event_api.dart';
-import '../../events/domain/event_summary.dart';
 import '../data/registration_api.dart';
 import '../domain/registration_models.dart';
 
-final eventApiProvider = Provider<EventApi>((ref) {
-  return EventApi(ref.watch(apiClientProvider).dio);
-});
+export '../../events/application/event_providers.dart'
+    show eventApiProvider, eventDetailProvider, eventListProvider, toggleEventBookmark;
 
 final registrationApiProvider = Provider<RegistrationApi>((ref) {
   return RegistrationApi(ref.watch(apiClientProvider).dio);
-});
-
-/// Fetches a single event's details, used by the event detail screen and
-/// the registration sheet to know whether it's Individual/Team, its price,
-/// and its team size bounds.
-final eventDetailProvider =
-    FutureProvider.family<EventSummary, String>((ref, eventId) async {
-  return ref.watch(eventApiProvider).getEvent(eventId);
 });
 
 /// Holds the current user's registrations. Exposed as a StateNotifier
