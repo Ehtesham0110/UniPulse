@@ -4,7 +4,95 @@ All notable changes to UniPulse are documented in this file.
 
 ## [Unreleased]
 
-Nothing yet — Events milestone is complete. Payments is next (not started).
+Nothing yet — Payments milestone is complete. QR Attendance is next (not started).
+
+## 2026-07-05 (4) — Payments milestone: Razorpay integration complete
+
+### Added — Backend
+- New `payments` module mounted at `/api/payments`:
+  - `POST /api/payments/orders`: creates (or idempotently reuses) a
+    Razorpay order for a registration that is `Pending Payment`. Verifies
+    the registration belongs to the caller, the event actually requires
+    payment, and — since paid-event registrations weren't capacity-limited
+    at creation time (a gap from the Registration milestone) — enforces
+    event capacity here, before money changes hands. Calling this again
+    before paying reuses the existing unpaid order instead of creating a
+    duplicate Razorpay order.
+  - `POST /api/payments/verify`: verifies the standard Razorpay HMAC-SHA256
+    signature (`order_id|payment_id` signed with the key secret). On a
+    valid signature: marks the payment `Paid`, moves the registration
+    `Pending Payment` → `Confirmed`, and atomically increments the event's
+    `currentParticipants` — capacity is only ever consumed after a real,
+    verified payment. **Idempotent:** calling this again for an
+    already-`Paid` payment returns success without reprocessing, so a
+    network retry from the Flutter client can never double-increment
+    capacity or double-confirm anything. A bad/tampered signature is
+    rejected (400) without mutating any state, since it could be a
+    transient client bug rather than a genuine failure.
+  - `POST /api/payments/:paymentId/fail`: reports a failed or
+    user-cancelled checkout. Marks only that payment attempt `Failed`; the
+    registration stays `Pending Payment` so the student can retry (a
+    fresh order is created next time, since `createOrder` only reuses
+    `Created` — not `Failed` — payments). Refuses to mark an already-`Paid`
+    payment as failed.
+  - `src/config/razorpay.js` (new): lazy Razorpay SDK client init, mirrors
+    the `firebase.js` pattern from the Authentication milestone.
+- `apps/backend/test/payments.verify.mjs` (new): mock-backed verification
+  harness (no live MongoDB or Razorpay API access in this sandbox) —
+  mocks the Mongoose model calls and the Razorpay SDK's `orders.create`
+  call, then runs the real, unmodified controller functions. 18/18 checks
+  pass.
+
+### Added — Flutter
+- `features/payments/domain/payment_order.dart`, `data/payment_api.dart`,
+  `application/payment_providers.dart` (new): typed order model and API
+  client for the three payment endpoints.
+- `registration_api.dart`: `register()` now returns the full
+  `NewRegistration` (id + status), not just the QR token, since the
+  payment flow needs the registration id to create an order.
+- `registration_sheet.dart`: after registering for a paid event (status
+  `Pending Payment`), creates a Razorpay order and opens the native
+  Razorpay checkout (`razorpay_flutter`, already a dependency). Bridges
+  the SDK's event-callback API (`EVENT_PAYMENT_SUCCESS`/`_ERROR`/
+  `EVENT_EXTERNAL_WALLET`) into an awaitable result via a `Completer` so
+  the existing async submit flow didn't need restructuring. On success,
+  verifies the payment with the backend, refreshes the shared
+  registrations provider, and returns to the **My Events** tab with a
+  success snackbar. On failure/cancellation, reports it to the backend
+  (`failPayment`, best-effort) and shows an inline retryable error without
+  closing the sheet. Distinct loading labels ("Registering…" → "Opening
+  payment…" → "Waiting for payment…") reflect exactly what's happening.
+- `features/home/application/home_tab_provider.dart` (new) +
+  `home_shell.dart` (converted to `ConsumerStatefulWidget`): a shared
+  `homeTabIndexProvider` lets the payment success flow programmatically
+  switch to the My Events tab from outside the shell widget, satisfying
+  "return to My Events after successful payment."
+
+### Verified
+- All backend files (including the new payments module and test) pass
+  `node --check`; full app boot with the payments router mounted; live
+  HTTP checks confirm all three payment routes are correctly mounted and
+  auth-guarded.
+- `apps/backend/test/payments.verify.mjs`: 18/18 checks pass — order
+  validation, idempotent order reuse, rejection for non-paid events,
+  capacity enforcement at order creation, signature validation
+  (missing/unknown-order/tampered), successful verification moving
+  `Pending Payment` → `Confirmed` and incrementing capacity exactly once,
+  duplicate-verification idempotency (capacity NOT double-incremented),
+  fail-then-retry flow, and refusing to fail an already-paid payment.
+- `test/events.verify.mjs` (23/23) and `test/registration.verify.mjs`
+  (16/16) re-run after the payments changes: no regressions. **57/57
+  backend checks pass in total across all three modules.**
+- Flutter: every relative import/export verified to resolve to a real
+  file; every new/changed symbol (`PaymentOrder`, `PaymentApi` methods,
+  `NewRegistration`, `homeTabIndexProvider`) manually cross-checked
+  against its definition. **`flutter analyze`/`flutter pub get` could not
+  be run** — no Flutter SDK is available in this sandbox. No new pub
+  dependency was added (`razorpay_flutter` was already present in
+  `pubspec.yaml` from the original project scaffold). See
+  `AI_HANDOVER.md` → Known Issues — the Razorpay checkout flow in
+  particular should be tested on a real device before relying on it,
+  since the native SDK bridge can't be exercised at all without one.
 
 ## 2026-07-05 (3) — Events milestone: live events module complete
 

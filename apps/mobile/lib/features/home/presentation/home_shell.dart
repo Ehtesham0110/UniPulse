@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../certificates/presentation/certificates_screen.dart';
 import '../../my_events/presentation/my_events_screen.dart';
 import '../../profile/presentation/profile_screen.dart';
 import '../../qr_scanner/presentation/qr_scanner_screen.dart';
+import '../application/home_tab_provider.dart';
 import 'home_screen.dart';
 
-class HomeShell extends StatefulWidget {
+class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
   @override
-  State<HomeShell> createState() => _HomeShellState();
+  ConsumerState<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends ConsumerState<HomeShell> {
   var index = 0;
 
   final screens = const [
@@ -24,8 +26,19 @@ class _HomeShellState extends State<HomeShell> {
     ProfileScreen(),
   ];
 
+  void _selectTab(int value) {
+    setState(() => index = value);
+    ref.read(homeTabIndexProvider.notifier).state = value;
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Lets flows outside the shell (e.g. a successful payment) switch tabs
+    // — e.g. jump to "My Events" — without a direct widget reference.
+    ref.listen<int>(homeTabIndexProvider, (previous, next) {
+      if (next != index) setState(() => index = next);
+    });
+
     return Scaffold(
       body: screens[index],
       bottomNavigationBar: Container(
@@ -46,29 +59,29 @@ class _HomeShellState extends State<HomeShell> {
               icon: Icons.home_rounded,
               label: 'Home',
               selected: index == 0,
-              onTap: () => setState(() => index = 0),
+              onTap: () => _selectTab(0),
             ),
             _NavItem(
               icon: Icons.event_available_rounded,
               label: 'My Events',
               selected: index == 1,
-              onTap: () => setState(() => index = 1),
+              onTap: () => _selectTab(1),
             ),
             _QrButton(
               selected: index == 2,
-              onTap: () => setState(() => index = 2),
+              onTap: () => _selectTab(2),
             ),
             _NavItem(
               icon: Icons.workspace_premium_rounded,
               label: 'Certificates',
               selected: index == 3,
-              onTap: () => setState(() => index = 3),
+              onTap: () => _selectTab(3),
             ),
             _NavItem(
               icon: Icons.person_rounded,
               label: 'Profile',
               selected: index == 4,
-              onTap: () => setState(() => index = 4),
+              onTap: () => _selectTab(4),
             ),
           ],
         ),

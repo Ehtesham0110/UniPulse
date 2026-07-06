@@ -1,9 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import '../../../core/widgets/gradient_button.dart';
 import '../../auth/application/auth_controller.dart';
 import '../../events/domain/event_summary.dart';
+import '../../home/application/home_tab_provider.dart';
+import '../../payments/application/payment_providers.dart';
+import '../../payments/data/payment_api.dart';
+import '../../payments/domain/payment_order.dart';
 import '../application/registration_providers.dart';
 import '../data/registration_api.dart';
 import '../domain/registration_models.dart';
@@ -15,6 +23,29 @@ void showRegistrationSheet(BuildContext context, {required String eventId}) {
     backgroundColor: Colors.transparent,
     builder: (_) => RegistrationSheet(eventId: eventId),
   );
+}
+
+/// Outcome of a single Razorpay checkout attempt, bridging the SDK's
+/// event-callback API into something `await`-able from `_submit`.
+class _PaymentOutcome {
+  const _PaymentOutcome.success({
+    required this.orderId,
+    required this.paymentId,
+    required this.signature,
+  })  : isSuccess = true,
+        message = null;
+
+  const _PaymentOutcome.failure(this.message)
+      : isSuccess = false,
+        orderId = '',
+        paymentId = '',
+        signature = '';
+
+  final bool isSuccess;
+  final String orderId;
+  final String paymentId;
+  final String signature;
+  final String? message;
 }
 
 class RegistrationSheet extends ConsumerStatefulWidget {
@@ -31,12 +62,26 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
   final List<TextEditingController> _memberNameControllers = [];
   final List<TextEditingController> _memberPhoneControllers = [];
 
+  late final Razorpay _razorpay;
+  Completer<_PaymentOutcome>? _paymentCompleter;
+
   int? _teamSize;
   bool _isSubmitting = false;
   String? _errorMessage;
+  String _submitLabel = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _razorpay = Razorpay();
+    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess);
+    _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _onPaymentError);
+    _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
+  }
 
   @override
   void dispose() {
+    _razorpay.clear();
     _teamNameController.dispose();
     for (final c in _memberNameControllers) {
       c.dispose();
@@ -45,6 +90,35 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  void _onPaymentSuccess(PaymentSuccessResponse response) {
+    _paymentCompleter?.complete(
+      _PaymentOutcome.success(
+        orderId: response.orderId ?? '',
+        paymentId: response.paymentId ?? '',
+        signature: response.signature ?? '',
+      ),
+    );
+  }
+
+  void _onPaymentError(PaymentFailureResponse response) {
+    _paymentCompleter?.complete(
+      _PaymentOutcome.failure(
+        response.message?.isNotEmpty == true
+            ? response.message!
+            : 'Payment was cancelled or could not be completed.',
+      ),
+    );
+  }
+
+  void _onExternalWallet(ExternalWalletResponse response) {
+    _paymentCompleter?.complete(
+      _PaymentOutcome.failure(
+        'Payment was started in ${response.walletName ?? 'an external wallet'}. '
+        'Check My Events in a moment to see if it went through, or try again.',
+      ),
+    );
   }
 
   void _syncMemberFields(int additionalMembersNeeded) {
@@ -62,6 +136,7 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
+      _submitLabel = 'Registering…';
     });
 
     try {
@@ -82,22 +157,21 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
         }
       }
 
-      await ref.read(registrationApiProvider).register(
+      final newRegistration = await ref.read(registrationApiProvider).register(
             eventId: event.id,
             teamName: event.isTeamEvent ? _teamNameController.text.trim() : null,
             members: members,
           );
 
-      await ref.read(myRegistrationsProvider.notifier).refresh();
-
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('You\'re registered for ${event.title}!'),
-          backgroundColor: const Color(0xFF22A33A),
-        ),
-      );
+      if (newRegistration.needsPayment) {
+        await _payAndConfirm(event, newRegistration.registrationId);
+      } else {
+        await ref.read(myRegistrationsProvider.notifier).refresh();
+        _closeWithSuccess(
+          message: 'You\'re registered for ${event.title}!',
+          goToMyEvents: false,
+        );
+      }
     } on RegistrationApiException catch (error) {
       setState(() => _errorMessage = error.message);
     } catch (_) {
@@ -105,6 +179,70 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  Future<void> _payAndConfirm(EventSummary event, String registrationId) async {
+    setState(() => _submitLabel = 'Opening payment…');
+
+    PaymentOrder order;
+    try {
+      order = await ref.read(paymentApiProvider).createOrder(registrationId);
+    } on PaymentApiException catch (error) {
+      setState(() => _errorMessage = error.message);
+      return;
+    }
+
+    final currentUser = ref.read(authControllerProvider).user;
+    _paymentCompleter = Completer<_PaymentOutcome>();
+
+    _razorpay.open({
+      'key': order.keyId,
+      'amount': order.amount * 100, // paise
+      'currency': order.currency,
+      'order_id': order.orderId,
+      'name': 'UniPulse',
+      'description': event.title,
+      if (currentUser != null)
+        'prefill': {'contact': currentUser.phone, 'email': ''},
+      'theme': {'color': '#FF6B1A'},
+    });
+
+    setState(() => _submitLabel = 'Waiting for payment…');
+    final outcome = await _paymentCompleter!.future;
+
+    if (outcome.isSuccess) {
+      try {
+        await ref.read(paymentApiProvider).verifyPayment(
+              orderId: outcome.orderId,
+              paymentId: outcome.paymentId,
+              signature: outcome.signature,
+            );
+        await ref.read(myRegistrationsProvider.notifier).refresh();
+        _closeWithSuccess(
+          message: 'Payment successful! You\'re registered for ${event.title}.',
+          goToMyEvents: true,
+        );
+      } on PaymentApiException catch (error) {
+        setState(() => _errorMessage = error.message);
+      }
+    } else {
+      unawaited(ref.read(paymentApiProvider).failPayment(order.paymentId));
+      setState(() => _errorMessage = outcome.message);
+    }
+  }
+
+  void _closeWithSuccess({required String message, required bool goToMyEvents}) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final router = GoRouter.of(context);
+    if (goToMyEvents) {
+      ref.read(homeTabIndexProvider.notifier).state = 1; // My Events tab
+    }
+    Navigator.pop(context);
+    if (goToMyEvents) router.go('/home');
+    messenger.showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: const Color(0xFF22A33A)),
+    );
   }
 
   @override
@@ -282,7 +420,7 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
                       Expanded(
                         child: Text(
                           event.paid
-                              ? 'Payment required to confirm your spot.'
+                              ? 'You\'ll be asked to pay securely via Razorpay.'
                               : 'Free Entry\nNo payment required for this event.',
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
@@ -298,15 +436,6 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
                     ],
                   ),
                 ),
-                if (event.paid) ...[
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Online payment isn\'t available yet — this milestone covers '
-                    'registration only. Your spot will show as "Pending Payment" '
-                    'until payments are wired up in a future update.',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF9295A4)),
-                  ),
-                ],
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 16),
                   Container(
@@ -344,7 +473,7 @@ class _RegistrationSheetState extends ConsumerState<RegistrationSheet> {
                 const SizedBox(height: 24),
                 GradientButton(
                   label: _isSubmitting
-                      ? 'Registering…'
+                      ? _submitLabel
                       : (event.paid ? 'Pay ₹${event.price} & Register' : 'Confirm Registration'),
                   icon: Icons.arrow_forward,
                   onPressed: (_isSubmitting || !canRegister) ? () {} : () => _submit(event),

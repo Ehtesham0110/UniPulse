@@ -13,12 +13,23 @@ class RegistrationApiException implements Exception {
   String toString() => message;
 }
 
+/// Result of a successful POST /registrations call.
+class NewRegistration {
+  const NewRegistration({required this.registrationId, required this.status, required this.qrToken});
+
+  final String registrationId;
+  final String status; // 'Confirmed' | 'Pending Payment'
+  final String qrToken;
+
+  bool get needsPayment => status == 'Pending Payment';
+}
+
 class RegistrationApi {
   RegistrationApi(this._dio);
 
   final Dio _dio;
 
-  Future<String> register({
+  Future<NewRegistration> register({
     required String eventId,
     String? teamName,
     List<TeamMemberInput>? members,
@@ -29,7 +40,13 @@ class RegistrationApi {
         if (teamName != null) 'teamName': teamName,
         if (members != null) 'members': members.map((m) => m.toJson()).toList(),
       });
-      return response.data['data']['qrToken'] as String? ?? '';
+      final data = response.data['data'] as Map<String, dynamic>;
+      final registration = data['registration'] as Map<String, dynamic>;
+      return NewRegistration(
+        registrationId: registration['_id'] as String,
+        status: registration['status'] as String? ?? 'Confirmed',
+        qrToken: data['qrToken'] as String? ?? '',
+      );
     } on DioException catch (error) {
       throw RegistrationApiException(
         _extractMessage(error),

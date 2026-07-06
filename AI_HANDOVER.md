@@ -7,7 +7,7 @@ _Last updated by: Claude (Sonnet 5), during this session._
 Authentication: ✅ Complete
 Registration: ✅ Complete
 Events: ✅ Complete
-Payments: ❌ Not Started
+Payments: ✅ Complete
 QR Attendance: ❌ Not Started
 Certificates: ❌ Not Started
 Notifications: ❌ Not Started
@@ -136,10 +136,89 @@ through the mock list.
 
 **Phase 1 (Authentication): complete and build-verified.**
 **Phase 2 (Registration milestone): complete and build-verified.**
-**Phase 3 (Events milestone): complete and build-verified.** Payments,
-QR Attendance, Certificates, and Notifications have deliberately **not**
-been started — per explicit scope instruction, only the Events milestone
-was completed this session.
+**Phase 3 (Events milestone): complete and build-verified.**
+**Phase 4 (Payments milestone): complete and build-verified.** QR
+Attendance, Certificates, and Notifications have deliberately **not**
+been started — per explicit scope instruction, only the Payments
+milestone was completed this session.
+
+## Session 4: Payments Milestone
+
+### What was built
+**Backend** — new `payments` module, mounted at `/api/payments`:
+- `src/config/razorpay.js` — lazy Razorpay SDK client init (same pattern
+  as `firebase.js`), failing with a clear error if credentials are
+  missing rather than an opaque SDK error.
+- `POST /api/payments/orders` — creates a Razorpay order for a
+  registration awaiting payment. Validates ownership, that the
+  registration is actually `Pending Payment`, that the event requires
+  payment, and — importantly — that the event isn't already at capacity.
+  This is a **real gap fix**: Phase 2's registration flow never
+  capacity-checked paid events at all (only free events went through the
+  atomic capacity guard), so an unlimited number of `Pending Payment`
+  registrations could pile up for a capacity-limited paid event. Capacity
+  is now enforced here, before money changes hands. Idempotent: reuses an
+  existing unpaid order instead of creating a duplicate.
+- `POST /api/payments/verify` — verifies the Razorpay
+  `order_id|payment_id` HMAC-SHA256 signature. On success: `Payment` →
+  `Paid`, `Registration` `Pending Payment` → `Confirmed`,
+  `Event.currentParticipants` incremented — capacity is consumed **only**
+  here, never earlier. On a bad signature: 400 with no state mutation (a
+  transient client bug shouldn't burn a real payment attempt). Idempotent:
+  re-verifying an already-`Paid` payment returns success without
+  reprocessing, so no double capacity increment from a retried call.
+- `POST /api/payments/:paymentId/fail` — marks one payment attempt as
+  `Failed` on cancellation/failure; the registration stays
+  `Pending Payment` so the student can retry with a fresh order.
+- `test/payments.verify.mjs` (new) — mock-backed harness with a fake
+  Razorpay `orders.create` and real HMAC signature math. **18/18 checks
+  pass.**
+
+**Flutter** — `registration_sheet.dart` now launches a real Razorpay
+checkout for paid events:
+- `features/payments/` (new: domain/data/application) — `PaymentOrder`
+  model, `PaymentApi` (createOrder/verifyPayment/failPayment),
+  `paymentApiProvider`.
+- `registration_api.dart`: `register()` now returns the full
+  `NewRegistration` (id + status) instead of just the QR token, since the
+  payment flow needs the registration id.
+- `registration_sheet.dart`: bridges `razorpay_flutter`'s event-callback
+  API (`EVENT_PAYMENT_SUCCESS`/`ERROR`/`EXTERNAL_WALLET`) into an
+  awaitable outcome via a `Completer`. Granular loading labels
+  ("Registering…" → "Opening payment…" → "Waiting for payment…"). On
+  success: verifies with the backend, refreshes registrations, and
+  navigates to My Events. On failure: reports it (best-effort) and keeps
+  the sheet open with an inline error so the student can retry without
+  re-entering team details.
+- `features/home/application/home_tab_provider.dart` (new) — a shared
+  `StateProvider<int>` so the payment success flow can switch
+  `HomeShell` to the My Events tab from outside the shell.
+  `home_shell.dart` converted to `ConsumerStatefulWidget` to watch it.
+
+### Verified
+Same sandbox constraints as every prior session (no Flutter SDK, no
+network, no live MongoDB/Razorpay API). `test/payments.verify.mjs` uses a
+fake `orders.create` swapped onto the real (lazily-constructed) Razorpay
+client instance, plus real `crypto.createHmac` signature generation, so
+the signature-verification logic in the controller is exercised exactly
+as it runs in production — only the network call to Razorpay itself is
+faked. All 18 checks pass, covering order validation, idempotent order
+reuse, payment-not-required rejection, capacity-at-order-creation
+rejection, valid/tampered signature handling, the status transition,
+capacity incrementing only on success, idempotent duplicate verification,
+and the fail/retry flow. `events.verify.mjs` (23/23) and
+`registration.verify.mjs` (16/16) re-run with no regressions — **57/57
+backend checks pass across all three modules.** Live HTTP smoke tests
+confirm all payment routes are correctly mounted and auth-guarded, and
+that the app still boots cleanly with all four modules (auth, events,
+registrations, payments) wired together.
+
+For Flutter: same manual verification discipline as every prior session
+(import/export resolution + symbol cross-referencing) — no Flutter SDK
+available to run `flutter pub get`/`flutter analyze`. No new pub
+dependency was added: `razorpay_flutter` was already in `pubspec.yaml`
+from the original project scaffold but had zero usage before this
+session.
 
 ## Session 3: Events Milestone
 
@@ -239,13 +318,35 @@ incompatibilities) that manual review cannot.
 
 1. **Firebase project setup** (developer action required, unchanged from
    prior sessions) — still blocks on-device testing of everything.
-2. **Payments** (not started): Razorpay integration, `Pending Payment` →
-   `Confirmed` transition (hook point exists in
-   `registration.controller.js`).
-3. **QR Attendance** (not started).
-4. **Certificates** (not started).
-5. **Notifications** (not started).
-6. **Events — remaining gaps** (deliberately out of scope this session):
+2. **QR Attendance** (not started): the registration QR token exists
+   server-side (`qrTokenHash`); still needed: an endpoint to validate a
+   scanned token and mark attendance, plus wiring `mobile_scanner` in the
+   Flutter app (currently a dependency with zero usage, same situation
+   `razorpay_flutter` was in before this session).
+3. **Certificates** (not started).
+4. **Notifications** (not started): Flutter has no `firebase_messaging`
+   wiring at all yet (only `firebase_auth`/`firebase_core` were added in
+   Session 1).
+5. **Payments — remaining gaps** (deliberately out of scope this
+   session):
+   - No **refund flow** — `Payment.status` supports `Refunded` in the
+     schema, but there's no endpoint to issue one (e.g. if an event is
+     cancelled after people paid).
+   - No **Razorpay webhook** — verification currently relies entirely on
+     the client calling `/payments/verify` after checkout. A webhook
+     (`payment.captured`/`payment.failed`) would make this robust against
+     the app being killed mid-payment (the payment would still show as
+     `Created` forever if the client never calls verify). Worth adding
+     before real production traffic.
+   - The order-creation capacity check and the verify-time increment are
+     both correct individually, but there's a theoretical race if many
+     users complete payment for the last slot(s) at the exact same
+     moment — see the note in Session 4's controller comments. Low risk,
+     documented rather than fixed, since a proper fix needs either a
+     reservation/hold system or DB-level transactions, which is a bigger
+     change than this milestone's scope.
+6. **Events — remaining gaps** (deliberately out of scope, unchanged from
+   Session 3):
    - No event **creation/editing UI** in Flutter — the backend fully
      supports it (`POST`/`PATCH /api/events`), but no organizer-facing
      form exists yet. This would naturally live in the Admin Panel.
@@ -262,8 +363,11 @@ incompatibilities) that manual review cannot.
 
 ## Next Recommended Task
 
-Per the instruction that came with this milestone, **stop here**. If
-resuming, Payments is the natural next step (see Pending Work #2).
+Per the instruction that came with this milestone, **stop here** — do not
+start QR Attendance until told to continue. If resuming, QR Attendance is
+the natural next step (see Pending Work #2): the registration QR token
+already exists server-side from Session 2, it just needs a
+validate-and-check-in endpoint and the `mobile_scanner` UI wired up.
 
 ## Session 2: Registration Milestone
 
@@ -318,18 +422,23 @@ Please run both locally before merging.
 1. **Firebase project credentials cannot be fabricated** — see
    `lib/firebase_options.dart` placeholder; run `flutterfire configure`.
 2. **Backend `.env` needs real values** for Firebase Admin + Mongo +
-   Razorpay + Cloudinary — see `.env.example`.
+   Razorpay + Cloudinary — see `.env.example`. Razorpay in particular:
+   without real `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`, `createOrder`
+   will fail with a 502 (caught and wrapped cleanly, not a crash — but
+   payments genuinely cannot work without real Razorpay test/live keys).
 3. **No sandbox toolchain for `flutter analyze`/`flutter pub get`/live
-   MongoDB in any session so far.** Backend logic is verified with
-   mock-backed test scripts (`test/registration.verify.mjs` 16/16,
-   `test/events.verify.mjs` 23/23 — 39/39 combined) plus `node --check`
-   and live HTTP smoke tests every session. Flutter code is verified via
-   import/export-resolution + manual symbol cross-referencing each
-   session (this caught a real broken-string-interpolation bug in Session
-   3 — see CHANGELOG.md), but is **not** compiled. Run
+   MongoDB/live Razorpay API in any session so far.** Backend logic is
+   verified with mock-backed test scripts (`test/registration.verify.mjs`
+   16/16, `test/events.verify.mjs` 23/23, `test/payments.verify.mjs`
+   18/18 — **57/57 combined**) plus `node --check` and live HTTP smoke
+   tests every session. Flutter code is verified via import/export-
+   resolution + manual symbol cross-referencing each session (this caught
+   a real broken-string-interpolation bug in Session 3 — see
+   CHANGELOG.md), but is **not** compiled. Run
    `flutter pub get && flutter analyze` before trusting this fully — no
    new Flutter dependency has been added in any session specifically to
-   reduce that risk.
+   reduce that risk (Session 4 used `razorpay_flutter`, which was already
+   in `pubspec.yaml` from the original scaffold).
 4. The default `collegeCode` is still hardcoded to `'UNIPULSE'` — unchanged
    from Session 1, still a known gap for multi-college deployments.
 5. **GitHub push could not be completed from this sandbox.** Network
@@ -342,9 +451,30 @@ Please run both locally before merging.
    bookmarks screen** — see Pending Work above (Events — remaining gaps).
    The backend fully supports all three; only the Flutter screens don't
    exist yet.
+7. **No Razorpay webhook, no refund endpoint** — see Pending Work above
+   (Payments — remaining gaps). Payment verification is entirely
+   client-driven right now.
 
 ## Files Modified (cumulative — see CHANGELOG.md for the authoritative
 per-session breakdown)
+
+**Session 4 (Payments milestone)**
+- `apps/backend/src/config/razorpay.js` (new)
+- `apps/backend/src/modules/payments/payment.controller.js` (new)
+- `apps/backend/src/modules/payments/payment.routes.js` (new)
+- `apps/backend/src/routes/index.js` (mounted the new router)
+- `apps/backend/test/payments.verify.mjs` (new — verification harness, 18/18)
+- `apps/mobile/lib/features/payments/domain/payment_order.dart` (new)
+- `apps/mobile/lib/features/payments/data/payment_api.dart` (new)
+- `apps/mobile/lib/features/payments/application/payment_providers.dart` (new)
+- `apps/mobile/lib/features/home/application/home_tab_provider.dart` (new)
+- `apps/mobile/lib/features/home/presentation/home_shell.dart` (converted
+  to ConsumerStatefulWidget to support external tab switching)
+- `apps/mobile/lib/features/registration/data/registration_api.dart`
+  (`register()` now returns `NewRegistration`, not just the QR token)
+- `apps/mobile/lib/features/registration/presentation/registration_sheet.dart`
+  (rewritten: full Razorpay checkout integration)
+- `CHANGELOG.md`, `AI_HANDOVER.md` (this file)
 
 **Session 3 (Events milestone)**
 - `apps/backend/src/modules/events/event.controller.js` (extended: update,
