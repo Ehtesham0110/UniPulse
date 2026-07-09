@@ -75,6 +75,19 @@ class RegistrationApi {
     }
   }
 
+  /// Fetches the (deterministic, regenerable) QR token for a registration
+  /// so it can be displayed in My Events. Only succeeds for registrations
+  /// that are actually checkable-in (Confirmed/Attended/Completed) — the
+  /// backend returns 409 for Pending Payment or Cancelled registrations.
+  Future<String> fetchQrToken(String registrationId) async {
+    try {
+      final response = await _dio.get('/registrations/$registrationId/qr');
+      return response.data['data']['qrToken'] as String;
+    } on DioException catch (error) {
+      throw RegistrationApiException(_extractMessage(error), statusCode: error.response?.statusCode);
+    }
+  }
+
   String _extractMessage(DioException error) {
     final backendMessage = error.response?.data?['message'] as String?;
     if (backendMessage != null && backendMessage.isNotEmpty) return backendMessage;

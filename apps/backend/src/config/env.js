@@ -15,5 +15,9 @@ export const env = {
   firebasePrivateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
   jwtAccessExpiry: process.env.JWT_ACCESS_EXPIRY ?? '15m',
   jwtRefreshExpiry: process.env.JWT_REFRESH_EXPIRY ?? '30d',
+  // Falls back to the access token secret in dev so the app still boots
+  // without extra config; set a dedicated QR_SIGNING_SECRET in production
+  // so rotating one secret doesn't invalidate every issued QR code.
+  qrSigningSecret: process.env.QR_SIGNING_SECRET ?? process.env.JWT_ACCESS_SECRET ?? 'dev-qr-secret',
 };
 

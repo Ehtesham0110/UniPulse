@@ -6,6 +6,7 @@ import '../../../core/utils/date_formatting.dart';
 import '../../registration/application/registration_providers.dart';
 import '../../registration/data/registration_api.dart';
 import '../../registration/domain/registration_models.dart';
+import '../../registration/presentation/qr_code_sheet.dart';
 
 class MyEventsScreen extends ConsumerWidget {
   const MyEventsScreen({super.key});
@@ -214,13 +215,19 @@ class _MyEventCard extends ConsumerWidget {
                 ],
               ),
             ),
+            if (registration.hasQrCode)
+              IconButton(
+                icon: const Icon(Icons.qr_code_rounded, color: Color(0xFFFF6B1A)),
+                tooltip: 'Show QR code',
+                onPressed: () => showRegistrationQrSheet(context, registration),
+              ),
             if (canCancel)
               IconButton(
                 icon: const Icon(Icons.close, color: Color(0xFF9295A4)),
                 tooltip: 'Cancel registration',
                 onPressed: () => _confirmCancel(context, ref),
               )
-            else
+            else if (!registration.hasQrCode)
               const Icon(Icons.chevron_right),
           ],
         ),

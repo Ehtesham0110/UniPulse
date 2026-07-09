@@ -5,6 +5,7 @@ import { Permissions } from '../../shared/utils/roles.js';
 import {
   registerForEvent,
   listMyRegistrations,
+  getRegistrationQr,
   listEventRegistrations,
   cancelRegistration,
 } from './registration.controller.js';
@@ -15,6 +16,7 @@ registrationRouter.use(authenticate);
 
 registrationRouter.post('/', registerForEvent);
 registrationRouter.get('/me', listMyRegistrations);
+registrationRouter.get('/:registrationId/qr', getRegistrationQr);
 registrationRouter.get(
   '/event/:eventId',
   requirePermission(Permissions.VIEW_PARTICIPANTS),

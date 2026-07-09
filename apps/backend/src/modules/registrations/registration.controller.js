@@ -1,15 +1,10 @@
-import crypto from 'node:crypto';
+import mongoose from 'mongoose';
 import { asyncHandler } from '../../shared/utils/async-handler.js';
 import { ApiError } from '../../shared/errors/api-error.js';
+import { buildQrToken } from '../../shared/utils/qr-token.js';
 import { Registration } from './registration.model.js';
 import { Team, TeamMember } from '../teams/team.model.js';
 import { Event, EventLifecycle } from '../events/event.model.js';
-
-function generateQrToken() {
-  const rawToken = crypto.randomBytes(24).toString('hex');
-  const qrTokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-  return { rawToken, qrTokenHash };
-}
 
 const OPEN_LIFECYCLES = new Set([EventLifecycle.REGISTRATION_OPEN]);
 
@@ -98,7 +93,8 @@ export const registerForEvent = asyncHandler(async (req, res) => {
     teamId = team._id;
   }
 
-  const { rawToken, qrTokenHash } = generateQrToken();
+  const registrationId = new mongoose.Types.ObjectId();
+  const { tokenHash: qrTokenHash } = buildQrToken(registrationId);
   const status = event.paid ? 'Pending Payment' : 'Confirmed';
 
   if (!event.paid) {
@@ -123,6 +119,7 @@ export const registerForEvent = asyncHandler(async (req, res) => {
   }
 
   const registration = await Registration.create({
+    _id: registrationId,
     collegeId: req.collegeId,
     eventId,
     studentId: req.user._id,
@@ -139,10 +136,10 @@ export const registerForEvent = asyncHandler(async (req, res) => {
     success: true,
     data: {
       registration,
-      // Only ever returned once, at creation time — we store just the
-      // hash. The QR code itself is generated client-side or via the
-      // certificates/attendance module from this raw token in Phase 6.
-      qrToken: rawToken,
+      // The QR token is deterministic (HMAC of the registration id), so
+      // it can always be regenerated later via GET /:registrationId/qr —
+      // it doesn't need to be saved anywhere client-side.
+      qrToken: buildQrToken(registration._id).token,
     },
   });
 });
@@ -156,6 +153,37 @@ export const listMyRegistrations = asyncHandler(async (req, res) => {
     .sort({ createdAt: -1 });
 
   res.json({ success: true, data: registrations });
+});
+
+/**
+ * Returns the QR token for the current user's own registration, so the
+ * Flutter app can render/re-render the QR code in "My Events" without
+ * ever needing to cache the raw token itself. Only shown for
+ * registrations that are actually checkable-in (Confirmed or Attended) —
+ * a cancelled or still-unpaid registration has nothing to scan.
+ */
+export const getRegistrationQr = asyncHandler(async (req, res) => {
+  const registration = await Registration.findOne({
+    _id: req.params.registrationId,
+    collegeId: req.collegeId,
+    studentId: req.user._id,
+  });
+  if (!registration) throw new ApiError(404, 'Registration not found');
+
+  if (!['Confirmed', 'Attended', 'Completed'].includes(registration.status)) {
+    throw new ApiError(
+      409,
+      registration.status === 'Pending Payment'
+        ? 'Complete payment to get your QR code'
+        : 'This registration does not have a QR code',
+      { reason: 'NO_QR_AVAILABLE' }
+    );
+  }
+
+  res.json({
+    success: true,
+    data: { qrToken: buildQrToken(registration._id).token, registrationId: registration._id },
+  });
 });
 
 export const listEventRegistrations = asyncHandler(async (req, res) => {

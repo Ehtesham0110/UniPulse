@@ -4,7 +4,132 @@ All notable changes to UniPulse are documented in this file.
 
 ## [Unreleased]
 
-Nothing yet — Payments milestone is complete. QR Attendance is next (not started).
+Nothing yet — QR Attendance milestone is complete. Certificates is next (not started).
+
+## 2026-07-06 — QR Attendance milestone complete
+
+### Fixed (design gap enabling this milestone)
+- **QR tokens are now deterministic instead of random.** Previously
+  (Session 2), a registration's QR token was `crypto.randomBytes(24)` —
+  only its SHA-256 hash was ever stored, and the raw token was returned
+  exactly once, at registration creation. That made it **impossible** to
+  redisplay a registration's QR code later (e.g. in "My Events" after
+  closing the app), since the server had no way to reproduce it. QR
+  tokens are now `HMAC-SHA256(registrationId, QR_SIGNING_SECRET)` —
+  deterministic and regenerable on demand from just the registration id,
+  while still being stored only as a hash and still being unguessable
+  without the server's signing secret. `registerForEvent` (Session 2,
+  unmodified otherwise) now pre-generates the registration's `_id` so the
+  token can be built before the document is created.
+
+### Added — Backend
+- `src/shared/utils/qr-token.js` (new): `buildQrToken`/`extractRegistrationId`
+  — the deterministic signing/verification logic above, using
+  `crypto.timingSafeEqual` for signature comparison.
+- `QR_SIGNING_SECRET` added to env config (falls back to the JWT access
+  secret in dev so the app still boots without extra config).
+- `GET /api/registrations/:registrationId/qr` (new): returns the
+  regenerated QR token for the caller's own registration. Only succeeds
+  for `Confirmed`/`Attended`/`Completed` registrations — returns 409 with
+  `reason: NO_QR_AVAILABLE` for `Pending Payment`, and 404 for anything
+  else (including `Cancelled`, and registrations belonging to someone
+  else).
+- New `attendance` module, mounted at `/api/attendance` (all three routes
+  gated by the existing `MARK_ATTENDANCE` permission — Organizer and
+  Super Admin, not plain Admin):
+  - `POST /api/attendance/validate`: resolves a scanned QR token to its
+    registration/event/student without mutating anything, so the
+    organizer app can show "who is this" before committing to an action.
+    Rejects invalid/tampered tokens, cancelled registrations, unpaid
+    (`Pending Payment`) registrations, a QR scanned at the wrong event,
+    and events that have ended/been cancelled — each with a distinct
+    `details.reason` code for the UI to key off.
+  - `POST /api/attendance/check-in`: creates or updates the `Attendance`
+    record (`checkedIn`, `checkInTime`, `scannedBy`, `scannerDevice`),
+    and transitions the registration from `Confirmed` to `Attended`.
+    **Prevents duplicate scans:** rejects with `ALREADY_CHECKED_IN` (409)
+    if already checked in, including the original check-in time in the
+    error for context.
+  - `POST /api/attendance/check-out`: requires a prior check-in
+    (`NOT_CHECKED_IN` if not); **prevents duplicate scans** the same way
+    (`ALREADY_CHECKED_OUT`).
+- `apps/backend/test/attendance.verify.mjs` (new): mock-backed harness
+  (no live MongoDB in this sandbox) exercising the real, unmodified
+  controller functions, including the real HMAC-based QR token logic
+  (not mocked — only the Mongoose model calls are). **17/17 checks pass.**
+
+### Added — Flutter
+**Student side:**
+- `registration_api.dart`: added `fetchQrToken(registrationId)`.
+- `registration_providers.dart`: added `registrationQrProvider` (family by
+  registrationId).
+- `MyRegistration`: added `hasQrCode` getter mirroring the backend's
+  eligibility rule (Confirmed/Attended/Completed only — never for
+  Cancelled or Pending Payment).
+- `qr_code_sheet.dart` (new): bottom sheet rendering the QR code via
+  `qr_flutter` (new dependency — see Verified below), with loading/error
+  states for the fetch.
+- `my_events_screen.dart`: registration cards now show a QR button when
+  `hasQrCode` is true. Because My Events already refreshes automatically
+  after a successful payment (wired in the Payments milestone) and after
+  cancellation, the QR button correctly appears/disappears without any
+  extra wiring needed this session.
+
+**Organizer side:**
+- New `features/attendance/` (domain/data/application): `ScannedAttendee`
+  model, `AttendanceApi` (validate/checkIn/checkOut) with error mapping
+  that preserves the backend's `reason` code, `attendanceApiProvider`.
+- `qr_scanner_screen.dart` (rewritten from a fully static mock): real
+  camera scanning via `mobile_scanner` (already a pubspec dependency,
+  unused until now), with a state machine (scanning → validating →
+  attendee info → action loading → success/failure) that:
+  - shows a viewfinder overlay while scanning, and ignores further scans
+    while one is already being processed or acted on (prevents
+    double-submits from the camera firing multiple detections of the
+    same code);
+  - displays attendee info (name, roll number, branch, event, current
+    attendance status) with Check In / Check Out buttons that
+    enable/disable based on current state;
+  - shows a distinct amber "Duplicate Scan" style (vs. red for other
+    errors) for `ALREADY_CHECKED_IN`/`ALREADY_CHECKED_OUT`, and specific
+    titles for every other `reason` code (Invalid QR Code, Registration
+    Cancelled, Payment Pending, Wrong Event, Event Ended, Not Checked In);
+  - shows a success state with a small pop-in checkmark animation and a
+    "Scan Next" action to resume the camera.
+  - Role-gated: students (who lack `MARK_ATTENDANCE`) see a friendly
+    "not available for your role" screen instead of requesting camera
+    access for a scanner they can't use.
+
+### Verified
+- All backend files pass `node --check`; full app boot with the
+  attendance router mounted alongside auth/events/registrations/payments;
+  live HTTP checks confirm attendance routes are correctly mounted and
+  auth-guarded.
+- `apps/backend/test/attendance.verify.mjs`: **17/17** checks pass —
+  QR token round-trip (issue → extract → matches original registration
+  id), tampered-signature rejection, malformed-token rejection,
+  `getRegistrationQr` regenerating the identical token and refusing
+  `Pending Payment`, `validateQr` happy path + wrong-event rejection,
+  check-in happy path (including the `Confirmed` → `Attended`
+  transition), duplicate check-in rejection, cancelled/pending-payment/
+  event-ended rejection, check-out-before-check-in rejection, check-out
+  happy path, and duplicate check-out rejection.
+- **All previous suites re-run with no regressions:**
+  `registration.verify.mjs` 16/16, `events.verify.mjs` 23/23,
+  `payments.verify.mjs` 18/18. **74/74 backend checks pass in total
+  across all four modules.**
+- Flutter: every relative import/export verified to resolve to a real
+  file; every new/changed symbol (`ScannedAttendee` fields,
+  `attendanceApiProvider`, `canScanAttendance`, `AttendanceApi` methods)
+  manually cross-checked against its definition. **`flutter analyze`/
+  `flutter pub get` could not be run** — no Flutter SDK is available in
+  this sandbox (unchanged from every prior session). **One new pub
+  dependency was added:** `qr_flutter` (pure-Dart, minimal transitive
+  deps, no platform channels) — needed to actually render a scannable QR
+  image on the student side; there was no way to satisfy "Display QR
+  inside My Events" without it. `mobile_scanner` was already in
+  `pubspec.yaml` from the original scaffold but had zero usage before
+  this session.
 
 ## 2026-07-05 (4) — Payments milestone: Razorpay integration complete
 

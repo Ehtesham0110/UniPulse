@@ -11,6 +11,13 @@ final registrationApiProvider = Provider<RegistrationApi>((ref) {
   return RegistrationApi(ref.watch(apiClientProvider).dio);
 });
 
+/// Fetches the QR token for a single registration, for display in My
+/// Events. Family-keyed by registrationId.
+final registrationQrProvider =
+    FutureProvider.family<String, String>((ref, registrationId) async {
+  return ref.watch(registrationApiProvider).fetchQrToken(registrationId);
+});
+
 /// Holds the current user's registrations. Exposed as a StateNotifier
 /// (rather than a plain FutureProvider) so screens can trigger a refresh
 /// after a new registration or a cancellation without re-reading the whole

@@ -54,4 +54,8 @@ class MyRegistration {
 
   bool get isPast => eventLifecycle == 'Completed' || eventLifecycle == 'Archived';
   bool get isCancelled => status == 'Cancelled';
+
+  /// Mirrors the backend's GET /registrations/:id/qr eligibility rule —
+  /// only Confirmed/Attended/Completed registrations have a QR to show.
+  bool get hasQrCode => status == 'Confirmed' || status == 'Attended' || status == 'Completed';
 }

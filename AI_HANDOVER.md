@@ -8,7 +8,7 @@ Authentication: ✅ Complete
 Registration: ✅ Complete
 Events: ✅ Complete
 Payments: ✅ Complete
-QR Attendance: ❌ Not Started
+QR Attendance: ✅ Complete
 Certificates: ❌ Not Started
 Notifications: ❌ Not Started
 Admin: 🟡 Partial
@@ -137,10 +137,76 @@ through the mock list.
 **Phase 1 (Authentication): complete and build-verified.**
 **Phase 2 (Registration milestone): complete and build-verified.**
 **Phase 3 (Events milestone): complete and build-verified.**
-**Phase 4 (Payments milestone): complete and build-verified.** QR
-Attendance, Certificates, and Notifications have deliberately **not**
-been started — per explicit scope instruction, only the Payments
-milestone was completed this session.
+**Phase 4 (Payments milestone): complete and build-verified.**
+**Phase 5 (QR Attendance milestone): complete and build-verified.**
+Certificates and Notifications have deliberately **not** been started —
+per explicit scope instruction, only the QR Attendance milestone was
+completed this session.
+
+## Session 5: QR Attendance Milestone
+
+### What was built
+**Backend:**
+- Fixed a real design gap in the Session 2 QR token scheme: tokens were
+  random and only ever stored as a hash, making them impossible to
+  regenerate for display later. Switched to deterministic HMAC-signed
+  tokens (`src/shared/utils/qr-token.js`) — same storage pattern (hash
+  only), but now regenerable from just the registration id, which this
+  milestone requires. `registerForEvent`'s only change was pre-generating
+  its `_id` so the token can be built before `create()`; all of Session
+  2's validation/capacity/duplicate-prevention logic is untouched.
+- `GET /api/registrations/:registrationId/qr` — regenerates a
+  registration's QR token on demand; refuses `Pending Payment` (409,
+  `NO_QR_AVAILABLE`) and anything else not `Confirmed`/`Attended`/
+  `Completed`.
+- New `attendance` module (`/api/attendance`, gated by `MARK_ATTENDANCE` —
+  Organizer + Super Admin only): `POST /validate` (read-only lookup),
+  `POST /check-in`, `POST /check-out`. Every failure mode gets a distinct
+  `details.reason` code (`INVALID_QR`, `CANCELLED`, `PAYMENT_PENDING`,
+  `WRONG_EVENT`, `EVENT_ENDED`, `ALREADY_CHECKED_IN`,
+  `ALREADY_CHECKED_OUT`, `NOT_CHECKED_IN`) so the Flutter scanner can
+  show a specific message instead of a generic error. Check-in
+  transitions the registration `Confirmed` → `Attended`.
+- `test/attendance.verify.mjs` (new, 17/17 passing).
+
+**Flutter:**
+- Student: `qr_code_sheet.dart` (new) renders the QR via `qr_flutter`
+  (new dependency — see below), triggered from a QR button on My Events
+  cards that only appears when `MyRegistration.hasQrCode` is true
+  (Confirmed/Attended/Completed). Because My Events already refreshes
+  reactively after payment/cancellation (from the Payments milestone),
+  the button correctly appears/disappears with no extra plumbing needed.
+- Organizer: `qr_scanner_screen.dart` rewritten from a fully static mock
+  into a real camera scanner (`mobile_scanner`, previously unused) with a
+  full state machine — scanning → validating → attendee info → check-in/
+  out → success/failure — including a distinct amber "Duplicate Scan"
+  style, per-reason-code titles, a pop-in success animation, and a
+  "Scan Next" flow to resume. Role-gated: students see a friendly
+  unavailable screen instead of a camera permission prompt they can't
+  use anyway (mirrors the backend's `MARK_ATTENDANCE` restriction).
+
+### Verified
+Same sandbox constraints as every prior session. `test/attendance.verify.mjs`
+uses the real, unmodified controller functions — including the real
+crypto-based QR signing/verification (not mocked, only the Mongoose model
+calls are) — so the token round-trip is genuinely exercised end-to-end:
+issue a token via `registerForEvent`, extract its registration id,
+confirm it matches; confirm a tampered token fails; confirm
+`getRegistrationQr` regenerates the identical token. 17/17 pass, plus all
+three prior suites re-run with no regressions
+(`registration.verify.mjs` 16/16, `events.verify.mjs` 23/23,
+`payments.verify.mjs` 18/18) — **74/74 backend checks pass in total.**
+Live HTTP smoke tests confirm the attendance routes are mounted and
+auth-guarded alongside every other module.
+
+For Flutter: same manual verification discipline (import/export
+resolution + symbol cross-referencing) — no Flutter SDK available in this
+sandbox. **One new pub dependency was added this session:** `qr_flutter`
+(chosen specifically for being pure-Dart with minimal transitive deps and
+no platform channels, to keep the "unverified dependency" risk as low as
+possible) — there was no way to satisfy "display a scannable QR code"
+without a QR-rendering library. `mobile_scanner` was already present but
+unused before this session.
 
 ## Session 4: Payments Milestone
 
@@ -318,33 +384,36 @@ incompatibilities) that manual review cannot.
 
 1. **Firebase project setup** (developer action required, unchanged from
    prior sessions) — still blocks on-device testing of everything.
-2. **QR Attendance** (not started): the registration QR token exists
-   server-side (`qrTokenHash`); still needed: an endpoint to validate a
-   scanned token and mark attendance, plus wiring `mobile_scanner` in the
-   Flutter app (currently a dependency with zero usage, same situation
-   `razorpay_flutter` was in before this session).
-3. **Certificates** (not started).
-4. **Notifications** (not started): Flutter has no `firebase_messaging`
+2. **Certificates** (not started).
+3. **Notifications** (not started): Flutter has no `firebase_messaging`
    wiring at all yet (only `firebase_auth`/`firebase_core` were added in
    Session 1).
-5. **Payments — remaining gaps** (deliberately out of scope this
+4. **QR Attendance — remaining gaps** (deliberately out of scope this
    session):
+   - No **attendance list/export screen** for organizers (e.g. "who
+     attended this event") — the data exists (`Attendance` documents,
+     `GET /registrations/event/:eventId` from Session 2 shows
+     registration status but not check-in/out times specifically). A
+     dedicated attendance report endpoint + screen would be natural
+     Admin Panel work.
+   - The QR scanner doesn't let the organizer pre-select which event
+     they're checking in for — `eventId` is sent as `null` from the
+     scanner, so the backend's `WRONG_EVENT` check never actually
+     triggers in practice. This was a deliberate scope simplification
+     (there's no "my assigned events" picker UI yet); the check-in still
+     works correctly, it just can't catch someone scanning a valid QR
+     from a different event at the wrong desk. Worth revisiting once
+     organizers have an event-selection flow.
+5. **Payments — remaining gaps** (deliberately out of scope, unchanged
+   from Session 4):
    - No **refund flow** — `Payment.status` supports `Refunded` in the
      schema, but there's no endpoint to issue one (e.g. if an event is
      cancelled after people paid).
    - No **Razorpay webhook** — verification currently relies entirely on
-     the client calling `/payments/verify` after checkout. A webhook
-     (`payment.captured`/`payment.failed`) would make this robust against
-     the app being killed mid-payment (the payment would still show as
-     `Created` forever if the client never calls verify). Worth adding
-     before real production traffic.
-   - The order-creation capacity check and the verify-time increment are
-     both correct individually, but there's a theoretical race if many
-     users complete payment for the last slot(s) at the exact same
-     moment — see the note in Session 4's controller comments. Low risk,
-     documented rather than fixed, since a proper fix needs either a
-     reservation/hold system or DB-level transactions, which is a bigger
-     change than this milestone's scope.
+     the client calling `/payments/verify` after checkout.
+   - Theoretical last-slot-capacity race under simultaneous payments —
+     documented in the controller, not fixed (needs a bigger change than
+     this milestone's scope).
 6. **Events — remaining gaps** (deliberately out of scope, unchanged from
    Session 3):
    - No event **creation/editing UI** in Flutter — the backend fully
@@ -364,10 +433,12 @@ incompatibilities) that manual review cannot.
 ## Next Recommended Task
 
 Per the instruction that came with this milestone, **stop here** — do not
-start QR Attendance until told to continue. If resuming, QR Attendance is
-the natural next step (see Pending Work #2): the registration QR token
-already exists server-side from Session 2, it just needs a
-validate-and-check-in endpoint and the `mobile_scanner` UI wired up.
+start Certificates until told to continue. If resuming, Certificates is
+the natural next step: template + PDF generation on the backend, and
+wiring the currently-static Flutter certificates screen to it. The
+`Attendance` records from this session (`checkedIn`/`checkedOut`) are a
+sensible gate for "only issue a certificate if the student actually
+attended."
 
 ## Session 2: Registration Milestone
 
@@ -430,15 +501,16 @@ Please run both locally before merging.
    MongoDB/live Razorpay API in any session so far.** Backend logic is
    verified with mock-backed test scripts (`test/registration.verify.mjs`
    16/16, `test/events.verify.mjs` 23/23, `test/payments.verify.mjs`
-   18/18 — **57/57 combined**) plus `node --check` and live HTTP smoke
-   tests every session. Flutter code is verified via import/export-
-   resolution + manual symbol cross-referencing each session (this caught
-   a real broken-string-interpolation bug in Session 3 — see
-   CHANGELOG.md), but is **not** compiled. Run
-   `flutter pub get && flutter analyze` before trusting this fully — no
-   new Flutter dependency has been added in any session specifically to
-   reduce that risk (Session 4 used `razorpay_flutter`, which was already
-   in `pubspec.yaml` from the original scaffold).
+   18/18, `test/attendance.verify.mjs` 17/17 — **74/74 combined**) plus
+   `node --check` and live HTTP smoke tests every session. Flutter code is
+   verified via import/export-resolution + manual symbol
+   cross-referencing each session (this caught a real
+   broken-string-interpolation bug in Session 3 — see CHANGELOG.md), but
+   is **not** compiled. Run `flutter pub get && flutter analyze` before
+   trusting this fully — **`qr_flutter` was added as a new dependency
+   this session** (see Known Issue below) and has NOT been verified to
+   resolve; every other session avoided adding unverified dependencies
+   where possible.
 4. The default `collegeCode` is still hardcoded to `'UNIPULSE'` — unchanged
    from Session 1, still a known gap for multi-college deployments.
 5. **GitHub push could not be completed from this sandbox.** Network
@@ -454,9 +526,50 @@ Please run both locally before merging.
 7. **No Razorpay webhook, no refund endpoint** — see Pending Work above
    (Payments — remaining gaps). Payment verification is entirely
    client-driven right now.
+8. **`qr_flutter` is a new, unverified dependency** (see #3) — run
+   `flutter pub get` first thing and confirm it resolves before anything
+   else in this milestone. If it fails to resolve, the QR display sheet
+   (`qr_code_sheet.dart`) is the only file that imports it — everything
+   else in this milestone (the scanner, the backend) works independently
+   of it.
+9. **The QR scanner doesn't pre-select an event** — see Pending Work
+   above (QR Attendance — remaining gaps). Check-in/out still work
+   correctly; only the "wrong event" cross-check is effectively unused
+   in the current UI.
 
 ## Files Modified (cumulative — see CHANGELOG.md for the authoritative
 per-session breakdown)
+
+**Session 5 (QR Attendance milestone)**
+- `apps/backend/src/shared/utils/qr-token.js` (new)
+- `apps/backend/src/config/env.js` (added `qrSigningSecret`)
+- `apps/backend/.env.example` (added `QR_SIGNING_SECRET`)
+- `apps/backend/src/modules/registrations/registration.controller.js`
+  (QR generation switched from random to deterministic; added
+  `getRegistrationQr` — see the "Fixed" note in CHANGELOG.md for why this
+  counts as a bug fix rather than a milestone-boundary violation)
+- `apps/backend/src/modules/registrations/registration.routes.js`
+  (added `GET /:registrationId/qr`)
+- `apps/backend/src/modules/attendance/attendance.controller.js` (new)
+- `apps/backend/src/modules/attendance/attendance.routes.js` (new)
+- `apps/backend/src/routes/index.js` (mounted the new router)
+- `apps/backend/test/attendance.verify.mjs` (new — verification harness, 17/17)
+- `apps/mobile/pubspec.yaml` (added `qr_flutter`)
+- `apps/mobile/lib/core/models/user_role.dart` (added `canScanAttendance`)
+- `apps/mobile/lib/features/registration/data/registration_api.dart`
+  (added `fetchQrToken`)
+- `apps/mobile/lib/features/registration/application/registration_providers.dart`
+  (added `registrationQrProvider`)
+- `apps/mobile/lib/features/registration/domain/registration_models.dart`
+  (added `hasQrCode` getter)
+- `apps/mobile/lib/features/registration/presentation/qr_code_sheet.dart` (new)
+- `apps/mobile/lib/features/my_events/presentation/my_events_screen.dart`
+  (added QR button for eligible registrations)
+- `apps/mobile/lib/features/attendance/domain/scanned_attendee.dart` (new)
+- `apps/mobile/lib/features/attendance/data/attendance_api.dart` (new)
+- `apps/mobile/lib/features/attendance/application/attendance_providers.dart` (new)
+- `apps/mobile/lib/features/qr_scanner/presentation/qr_scanner_screen.dart`
+  (rewritten from a fully static mock)
 
 **Session 4 (Payments milestone)**
 - `apps/backend/src/config/razorpay.js` (new)

@@ -6,6 +6,7 @@ import { collegeRouter } from '../modules/colleges/college.routes.js';
 import { eventRouter } from '../modules/events/event.routes.js';
 import { registrationRouter } from '../modules/registrations/registration.routes.js';
 import { paymentRouter } from '../modules/payments/payment.routes.js';
+import { attendanceRouter } from '../modules/attendance/attendance.routes.js';
 
 export const apiRouter = Router();
 
@@ -16,4 +17,5 @@ apiRouter.use('/colleges', collegeRouter);
 apiRouter.use('/events', eventRouter);
 apiRouter.use('/registrations', registrationRouter);
 apiRouter.use('/payments', paymentRouter);
+apiRouter.use('/attendance', attendanceRouter);
 
