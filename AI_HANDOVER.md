@@ -9,7 +9,7 @@ Registration: ✅ Complete
 Events: ✅ Complete
 Payments: ✅ Complete
 QR Attendance: ✅ Complete
-Certificates: ❌ Not Started
+Certificates: ✅ Complete
 Notifications: ❌ Not Started
 Admin: 🟡 Partial
 Analytics: 🟡 Partial
@@ -139,9 +139,85 @@ through the mock list.
 **Phase 3 (Events milestone): complete and build-verified.**
 **Phase 4 (Payments milestone): complete and build-verified.**
 **Phase 5 (QR Attendance milestone): complete and build-verified.**
-Certificates and Notifications have deliberately **not** been started —
-per explicit scope instruction, only the QR Attendance milestone was
+**Phase 6 (Certificates milestone): complete and build-verified.**
+Notifications and Analytics have deliberately **not** been started — per
+explicit scope instruction, only the Certificates milestone was
 completed this session.
+
+## Session 6: Certificates Milestone
+
+### What was built
+**Backend:**
+- Rewrote the (previously inert, unused) `certificate.model.js` to match
+  this milestone precisely: `certificateNumber`, `pdfUrl` (a stable API
+  path), an internal `filePath` (`select: false`, never leaks into API
+  responses), `issuedAt`, `generatedBy`, `regeneratedCount`, and a unique
+  `(collegeId, eventId, registrationId)` index as the source of truth for
+  duplicate prevention. Added `CertificateTemplate` alongside it.
+- **Additive schema change:** `Event.certificateTemplateId` (optional) so
+  a template can be selected per event via the existing
+  `PATCH /api/events/:id` — no new endpoint needed, and doesn't affect
+  any existing Events behavior/tests.
+- `certificate-pdf.js`: real PDF rendering via `pdfkit` (already a
+  dependency, unused until now) to a local `storage/certificates/`
+  directory — explicitly isolated so swapping it for Cloudinary/S3 later
+  only touches this one file.
+- `certificate.service.js`: the full eligibility chain (Registration
+  exists → not Cancelled → payment completed → attended → event
+  Completed), single/bulk/regenerate generation, each failure mode with
+  a distinct `reason` code.
+- `certificate.controller.js`/`routes.js`: `/api/certificates` —
+  `GET /me`, `GET /:id/view` (inline), `GET /:id/download` (attachment,
+  owner-or-admin access control), `POST /generate`, `POST /bulk-generate`,
+  `POST /:id/regenerate` (requires explicit `confirm: true`),
+  `POST|GET /templates`.
+- **Minimal, additive auth change:** `authenticate` now accepts a
+  `?token=` query param fallback (only when no Bearer header is present)
+  — needed because the Flutter app opens certificate PDFs in an external
+  browser/viewer via `url_launcher`, which can't attach custom headers.
+  Verified all three cases (header/query/neither) still behave correctly.
+- `test/certificate.verify.mjs` (new, 21/21 passing) — includes genuine
+  PDF-content verification (real `pdfkit` output, not mocked), not just
+  HTTP status codes.
+
+### Bug caught and fixed
+`generateCertificate` relied on the Mongoose schema default for
+`regeneratedCount: 0`. The test suite's mock model (consistent with every
+prior milestone's mocks — none apply schema defaults) caught this
+producing `NaN` after a regenerate call. Fixed by setting it explicitly
+at creation, which is better practice regardless of the mock.
+
+### Flutter
+- Student: `certificates_screen.dart` rewritten with real loading/empty/
+  error states, pull-to-refresh, and View/Download/Share actions that
+  open the PDF externally via `url_launcher` with a token-authenticated
+  URL (built by `buildCertificateExternalUrl`).
+- Admin: new `admin_certificates_screen.dart` — generate one, bulk
+  generate (with a generated/skipped summary), and regenerate (behind a
+  confirmation dialog, on top of the backend's own guard). Reachable from
+  the Admin Panel's previously-decorative "Certificates" tile.
+- **Scope note:** no participant/event picker UI exists yet (Admin Panel
+  is still mostly static), so the admin screen pragmatically takes
+  registration/event/certificate ids as text input. The generation logic
+  itself is fully real — only the input method is a simplification.
+
+### Verified
+Same sandbox constraints as every prior session. `test/certificate.verify.mjs`
+runs the real, unmodified service/controller functions against mocked
+Mongoose calls — but PDF generation itself is **not** mocked, so the
+suite asserts the actual output file exists on disk, has real content,
+and starts with a valid `%PDF` header. 21/21 pass, plus all four prior
+suites re-run with no regressions (`registration.verify.mjs` 16/16,
+`events.verify.mjs` 23/23, `payments.verify.mjs` 18/18,
+`attendance.verify.mjs` 17/17) — **95/95 backend checks pass in total.**
+Live HTTP smoke tests confirm the certificates routes are mounted and
+auth-guarded (including the new query-token fallback) alongside every
+other module.
+
+For Flutter: same manual verification discipline — no Flutter SDK
+available in this sandbox. **One new pub dependency was added:**
+`url_launcher` (official Flutter-team package, minimal risk) — there was
+no way to open an authenticated PDF externally without it.
 
 ## Session 5: QR Attendance Milestone
 
@@ -384,61 +460,57 @@ incompatibilities) that manual review cannot.
 
 1. **Firebase project setup** (developer action required, unchanged from
    prior sessions) — still blocks on-device testing of everything.
-2. **Certificates** (not started).
-3. **Notifications** (not started): Flutter has no `firebase_messaging`
+2. **Notifications** (not started): Flutter has no `firebase_messaging`
    wiring at all yet (only `firebase_auth`/`firebase_core` were added in
    Session 1).
-4. **QR Attendance — remaining gaps** (deliberately out of scope this
+3. **Analytics** (not started beyond the one overview endpoint from
+   before Session 1).
+4. **Certificates — remaining gaps** (deliberately out of scope this
    session):
-   - No **attendance list/export screen** for organizers (e.g. "who
-     attended this event") — the data exists (`Attendance` documents,
-     `GET /registrations/event/:eventId` from Session 2 shows
-     registration status but not check-in/out times specifically). A
-     dedicated attendance report endpoint + screen would be natural
-     Admin Panel work.
-   - The QR scanner doesn't let the organizer pre-select which event
-     they're checking in for — `eventId` is sent as `null` from the
-     scanner, so the backend's `WRONG_EVENT` check never actually
-     triggers in practice. This was a deliberate scope simplification
-     (there's no "my assigned events" picker UI yet); the check-in still
-     works correctly, it just can't catch someone scanning a valid QR
-     from a different event at the wrong desk. Worth revisiting once
-     organizers have an event-selection flow.
-5. **Payments — remaining gaps** (deliberately out of scope, unchanged
-   from Session 4):
-   - No **refund flow** — `Payment.status` supports `Refunded` in the
-     schema, but there's no endpoint to issue one (e.g. if an event is
-     cancelled after people paid).
-   - No **Razorpay webhook** — verification currently relies entirely on
-     the client calling `/payments/verify` after checkout.
-   - Theoretical last-slot-capacity race under simultaneous payments —
-     documented in the controller, not fixed (needs a bigger change than
-     this milestone's scope).
-6. **Events — remaining gaps** (deliberately out of scope, unchanged from
-   Session 3):
-   - No event **creation/editing UI** in Flutter — the backend fully
-     supports it (`POST`/`PATCH /api/events`), but no organizer-facing
-     form exists yet. This would naturally live in the Admin Panel.
-   - No **image upload** — `media.galleryUrls`/`bannerUrl`/`thumbnailUrl`
-     are stored and displayed if present, but there's no Cloudinary
-     upload flow yet (no Cloudinary credentials configured either — see
-     Known Issues).
-   - No dedicated "My Bookmarks" screen — bookmarking works (toggle +
-     persisted + reflected everywhere), but there's no screen listing
-     just bookmarked events yet (the backend supports it via
-     `?bookmarked=true`).
-   - Admin panel and analytics screens still show static/mock data —
-     untouched, per scope (Phase 9 work).
+   - **No participant/event picker UI for admins** — `admin_certificates_screen.dart`
+     takes registration/event/certificate ids as raw text input. This is
+     workable but not great UX; a proper picker needs the
+     `GET /registrations/event/:eventId` list (already exists, from
+     Session 2) wired into a selectable UI — natural Admin Panel work.
+   - **No certificate template upload UI** — the backend supports
+     `POST /certificates/templates` (name/backgroundUrl/htmlTemplate
+     metadata, same URL-based pattern as Events' gallery images), but
+     there's no Flutter screen for creating one yet, and no Cloudinary
+     wiring to actually upload a background image file (same gap noted
+     for Events' gallery images).
+   - **No live bulk-generation progress** — `bulk-generate` is a single
+     synchronous request/response; the "progress UI" is a spinner while
+     waiting, then a final summary, not a live per-student progress
+     stream. True streaming progress would need websockets or polling a
+     job-status endpoint, which is a bigger change than this milestone's
+     scope.
+   - Certificate PDFs are visually simple (no custom template rendering
+     yet) — `writeCertificatePdf` always produces the same layout,
+     regardless of a template's `backgroundUrl`/`htmlTemplate`, since
+     rendering an arbitrary HTML template or fetching a remote background
+     image would add real complexity and a network dependency during PDF
+     generation. Templates currently only affect the certificate's title
+     text (`templateName`).
+5. **QR Attendance — remaining gaps** (unchanged from Session 5): no
+   attendance list/export screen; QR scanner doesn't pre-select an event.
+6. **Payments — remaining gaps** (unchanged from Session 4): no refund
+   flow; no Razorpay webhook; theoretical last-slot-capacity race
+   (documented, not fixed).
+7. **Events — remaining gaps** (unchanged from Session 3): no event
+   creation/editing UI, no image upload flow, no dedicated bookmarks
+   screen, admin panel/analytics still mostly static.
 
 ## Next Recommended Task
 
 Per the instruction that came with this milestone, **stop here** — do not
-start Certificates until told to continue. If resuming, Certificates is
-the natural next step: template + PDF generation on the backend, and
-wiring the currently-static Flutter certificates screen to it. The
-`Attendance` records from this session (`checkedIn`/`checkedOut`) are a
-sensible gate for "only issue a certificate if the student actually
-attended."
+start Notifications or Analytics until told to continue. If resuming,
+Notifications is the natural next step: FCM sending by audience
+(college/branch/year/club/event participants/individual), which needs
+`firebase_messaging` added to the Flutter app (currently absent — only
+`firebase_auth`/`firebase_core` exist) and a notifications-sending
+service on the backend (the `Notification` model already exists,
+unused, same situation `Payment`/`Attendance`/`Certificate` were in
+before their respective milestones).
 
 ## Session 2: Registration Milestone
 
@@ -501,16 +573,15 @@ Please run both locally before merging.
    MongoDB/live Razorpay API in any session so far.** Backend logic is
    verified with mock-backed test scripts (`test/registration.verify.mjs`
    16/16, `test/events.verify.mjs` 23/23, `test/payments.verify.mjs`
-   18/18, `test/attendance.verify.mjs` 17/17 — **74/74 combined**) plus
-   `node --check` and live HTTP smoke tests every session. Flutter code is
-   verified via import/export-resolution + manual symbol
-   cross-referencing each session (this caught a real
-   broken-string-interpolation bug in Session 3 — see CHANGELOG.md), but
-   is **not** compiled. Run `flutter pub get && flutter analyze` before
-   trusting this fully — **`qr_flutter` was added as a new dependency
-   this session** (see Known Issue below) and has NOT been verified to
-   resolve; every other session avoided adding unverified dependencies
-   where possible.
+   18/18, `test/attendance.verify.mjs` 17/17, `test/certificate.verify.mjs`
+   21/21 — **95/95 combined**) plus `node --check` and live HTTP smoke
+   tests every session. Flutter code is verified via import/export-
+   resolution + manual symbol cross-referencing each session (this caught
+   a real broken-string-interpolation bug in Session 3 — see
+   CHANGELOG.md), but is **not** compiled. Run
+   `flutter pub get && flutter analyze` before trusting this fully —
+   **both `qr_flutter` (Session 5) and `url_launcher` (Session 6) are new
+   dependencies that have NOT been verified to resolve.**
 4. The default `collegeCode` is still hardcoded to `'UNIPULSE'` — unchanged
    from Session 1, still a known gap for multi-college deployments.
 5. **GitHub push could not be completed from this sandbox.** Network
@@ -526,19 +597,58 @@ Please run both locally before merging.
 7. **No Razorpay webhook, no refund endpoint** — see Pending Work above
    (Payments — remaining gaps). Payment verification is entirely
    client-driven right now.
-8. **`qr_flutter` is a new, unverified dependency** (see #3) — run
-   `flutter pub get` first thing and confirm it resolves before anything
-   else in this milestone. If it fails to resolve, the QR display sheet
-   (`qr_code_sheet.dart`) is the only file that imports it — everything
-   else in this milestone (the scanner, the backend) works independently
-   of it.
+8. **`qr_flutter` and `url_launcher` are new, unverified dependencies**
+   (see #3) — run `flutter pub get` first thing and confirm both resolve.
+   If `qr_flutter` fails, only `qr_code_sheet.dart` is affected. If
+   `url_launcher` fails, only `certificates_screen.dart`'s View/Download/
+   Share buttons are affected — everything else in both milestones
+   (scanner, certificate generation, the backend) works independently.
 9. **The QR scanner doesn't pre-select an event** — see Pending Work
    above (QR Attendance — remaining gaps). Check-in/out still work
    correctly; only the "wrong event" cross-check is effectively unused
    in the current UI.
+10. **No Cloudinary credentials configured** — blocks both Events'
+    gallery-image upload and Certificate template background-image
+    upload (both currently take a URL string, not a file). See Pending
+    Work (Certificates — remaining gaps, Events — remaining gaps).
+11. **Certificate PDFs use a fixed layout** — a template's `name` affects
+    the title text, but `backgroundUrl`/`htmlTemplate` aren't rendered
+    into the PDF yet (see Pending Work). This was a deliberate scope
+    decision to avoid a network dependency (fetching a remote image)
+    inside certificate generation.
+12. **`admin_certificates_screen.dart` takes raw ids as text input** — no
+    participant/event picker UI exists yet. The generation logic is
+    fully real; only the input method is a placeholder until Admin Panel
+    gets real data (see Pending Work).
 
 ## Files Modified (cumulative — see CHANGELOG.md for the authoritative
 per-session breakdown)
+
+**Session 6 (Certificates milestone)**
+- `apps/backend/src/modules/certificates/certificate.model.js` (rewritten
+  to match this milestone; added `CertificateTemplate`)
+- `apps/backend/src/modules/certificates/certificate.service.js` (new)
+- `apps/backend/src/modules/certificates/certificate.controller.js` (new)
+- `apps/backend/src/modules/certificates/certificate.routes.js` (new)
+- `apps/backend/src/shared/utils/certificate-pdf.js` (new — pdfkit rendering)
+- `apps/backend/src/modules/events/event.model.js` (additive:
+  `certificateTemplateId`)
+- `apps/backend/src/middleware/auth.js` (additive: `?token=` fallback for
+  external PDF viewers — Bearer header path unchanged)
+- `apps/backend/src/routes/index.js` (mounted the new router)
+- `apps/backend/storage/certificates/` (new — local PDF storage dir, gitignored)
+- `apps/backend/test/certificate.verify.mjs` (new — verification harness, 21/21)
+- `apps/mobile/pubspec.yaml` (added `url_launcher`)
+- `apps/mobile/lib/features/certificates/domain/earned_certificate.dart` (new)
+- `apps/mobile/lib/features/certificates/data/certificate_api.dart` (new)
+- `apps/mobile/lib/features/certificates/application/certificate_providers.dart` (new)
+- `apps/mobile/lib/features/certificates/presentation/certificates_screen.dart`
+  (rewritten from a fully static mock)
+- `apps/mobile/lib/features/admin/presentation/admin_certificates_screen.dart` (new)
+- `apps/mobile/lib/features/admin/presentation/admin_panel_screen.dart`
+  (wired the existing "Certificates" tile to navigate; added `onTap` support
+  to `_Action`; other tiles left as decorative, unchanged)
+- `apps/mobile/lib/app/router/app_router.dart` (added `/admin/certificates`)
 
 **Session 5 (QR Attendance milestone)**
 - `apps/backend/src/shared/utils/qr-token.js` (new)

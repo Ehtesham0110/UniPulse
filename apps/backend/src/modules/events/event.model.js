@@ -82,6 +82,10 @@ const EventSchema = new mongoose.Schema(
     organizer: OrganizerSchema,
     maximumParticipants: Number,
     currentParticipants: { type: Number, default: 0 },
+    // Additive field for the Certificates milestone — which template to
+    // use when generating certificates for this event. Optional; a
+    // generate/bulk-generate call can also pass a templateId explicitly.
+    certificateTemplateId: { type: mongoose.Schema.Types.ObjectId, ref: 'CertificateTemplate' },
     lifecycle: {
       type: String,
       enum: Object.values(EventLifecycle),

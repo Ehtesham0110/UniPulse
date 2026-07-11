@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 class AdminPanelScreen extends StatelessWidget {
   const AdminPanelScreen({super.key});
@@ -56,13 +57,17 @@ class AdminPanelScreen extends StatelessWidget {
             crossAxisCount: 3,
             mainAxisSpacing: 12,
             crossAxisSpacing: 12,
-            children: const [
-              _Action('Create Event', Icons.add_circle),
-              _Action('Participants', Icons.groups),
-              _Action('Certificates', Icons.workspace_premium),
-              _Action('Notifications', Icons.campaign),
-              _Action('Admins', Icons.admin_panel_settings),
-              _Action('Analytics', Icons.bar_chart),
+            children: [
+              const _Action('Create Event', Icons.add_circle),
+              const _Action('Participants', Icons.groups),
+              _Action(
+                'Certificates',
+                Icons.workspace_premium,
+                onTap: () => context.push('/admin/certificates'),
+              ),
+              const _Action('Notifications', Icons.campaign),
+              const _Action('Admins', Icons.admin_panel_settings),
+              const _Action('Analytics', Icons.bar_chart),
             ],
           ),
           const SizedBox(height: 22),
@@ -107,26 +112,31 @@ class _Stat extends StatelessWidget {
 }
 
 class _Action extends StatelessWidget {
-  const _Action(this.label, this.icon);
+  const _Action(this.label, this.icon, {this.onTap});
   final String label;
   final IconData icon;
+  final VoidCallback? onTap;
   @override
-  Widget build(BuildContext context) => Container(
-        decoration: BoxDecoration(
-          border: Border.all(color: Color(0xFFEDEDF2)),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: Color(0xFFFF5A1A)),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
-            ),
-          ],
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFEDEDF2)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: const Color(0xFFFF5A1A)),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+              ),
+            ],
+          ),
         ),
       );
 }

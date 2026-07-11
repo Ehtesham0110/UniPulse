@@ -4,7 +4,124 @@ All notable changes to UniPulse are documented in this file.
 
 ## [Unreleased]
 
-Nothing yet — QR Attendance milestone is complete. Certificates is next (not started).
+Nothing yet — Certificates milestone is complete. Notifications is next (not started).
+
+## 2026-07-09 — Certificates milestone complete
+
+### Added — Backend
+- `certificate.model.js` rewritten to match this milestone precisely
+  (the model existed but nothing used it before this session): `Certificate`
+  now stores `certificateNumber`, `pdfUrl` (a stable API path, not a raw
+  file path), an internal `filePath` (local disk location, `select: false`
+  so it never leaks into API responses), `issuedAt`, `generatedBy`,
+  `regeneratedCount`, and a unique compound index on
+  `(collegeId, eventId, registrationId)` — the source of truth for
+  duplicate prevention. Added `CertificateTemplate` alongside it.
+- **Additive schema change:** `Event.certificateTemplateId` (optional,
+  default undefined) so a template can be selected per event via the
+  existing `PATCH /api/events/:id`. Doesn't affect any existing Events
+  behavior or tests.
+- `src/shared/utils/certificate-pdf.js`: renders a real certificate PDF
+  with `pdfkit` (already a backend dependency, unused until now) to
+  `apps/backend/storage/certificates/<certificateNumber>.pdf` — a local
+  disk abstraction, explicitly *not* baked into the generation/validation
+  logic, so swapping it for Cloudinary/S3 later only touches this one file.
+- `certificate.service.js`: the eligibility chain from the spec —
+  Registration exists → not Cancelled → payment completed (not
+  `Pending Payment`) → `Attendance.checkedIn` is true → `Event.lifecycle`
+  is `Completed` — each with a distinct `details.reason` code
+  (`NOT_FOUND`, `CANCELLED`, `PAYMENT_PENDING`, `NOT_ATTENDED`,
+  `EVENT_NOT_COMPLETED`). `generateCertificate` (single),
+  `regenerateCertificate` (reissue, re-renders the PDF and increments
+  `regeneratedCount`, same certificate number), and
+  `bulkGenerateForEvent` (loops every `Attended` registration in a
+  `Completed` event; per-student failures — usually
+  `DUPLICATE_CERTIFICATE` on a re-run — are collected into a summary
+  rather than aborting the whole batch).
+- `certificate.controller.js` + `certificate.routes.js`, mounted at
+  `/api/certificates`:
+  - `GET /me` — the current user's certificates.
+  - `GET /:id/view` (inline) / `GET /:id/download` (attachment) — stream
+    the PDF from local disk; owner or `ISSUE_CERTIFICATES` (Admin/Super
+    Admin) only, 404 if the certificate or its file is missing.
+  - `POST /generate`, `POST /bulk-generate` — `ISSUE_CERTIFICATES` only.
+  - `POST /:id/regenerate` — `ISSUE_CERTIFICATES` only, and additionally
+    requires `{ "confirm": true }` in the body ("regenerate only if
+    explicitly allowed").
+  - `POST /templates`, `GET /templates` — basic template CRUD
+    (metadata/URL only, consistent with how Events already handles
+    gallery images — no file upload endpoint was in scope).
+- **Minimal, additive auth middleware change:** `authenticate` now
+  accepts a `?token=` query parameter as a fallback *only* when no
+  `Authorization` header is present. Needed because `view`/`download`
+  are opened in an external browser/PDF viewer via `url_launcher` on the
+  Flutter side, which can't attach custom headers. The Bearer-header path
+  is completely unchanged — verified with live requests covering both
+  paths plus the "neither present" 401 case.
+- `apps/backend/test/certificate.verify.mjs` (new): mock-backed harness
+  that runs the real, unmodified service/controller functions, including
+  **real PDF generation** (pdfkit is not mocked — only the Mongoose model
+  calls are), asserting the output file actually exists, has real content,
+  and starts with a valid `%PDF` header. **21/21 checks pass.**
+
+### Fixed
+- `generateCertificate` relied on the Mongoose schema default for
+  `regeneratedCount: 0` — the test suite's mock model (which doesn't
+  apply schema defaults, same as every prior milestone's test mocks)
+  caught this producing `NaN` after a regenerate. Fixed by explicitly
+  setting `regeneratedCount: 0` at creation, which is also just better
+  practice regardless of the mock.
+
+### Added — Flutter
+**Student:**
+- `features/certificates/` (domain/data/application): `EarnedCertificate`
+  model, `CertificateApi` (list mine), and `buildCertificateExternalUrl`
+  — combines the API origin, the certificate's relative `pdfUrl`, and the
+  stored access token into a URL `url_launcher` can open externally.
+- `certificates_screen.dart` (rewritten from a fully static mock): real
+  loading/empty/error states, pull-to-refresh, and per-certificate
+  View/Download/Share actions that open the PDF in the device's browser
+  or PDF viewer via `launchUrl(..., mode: LaunchMode.externalApplication)`.
+
+**Admin:**
+- `admin_certificates_screen.dart` (new): generate a certificate for one
+  registration, bulk-generate for an event (with a result summary —
+  generated count vs. skipped, with reasons), and regenerate (behind a
+  confirmation dialog on top of the backend's own `confirm: true` guard).
+  Full loading states and success/error snackbars throughout. Reachable
+  from the Admin Panel's existing (previously non-functional)
+  "Certificates" tile.
+- **Scope note:** there's no participant/event picker UI yet (Admin
+  Panel is still mostly static — see Pending Work), so this pragmatically
+  takes registration/event/certificate ids as text input rather than
+  blocking the whole milestone on building pickers first. The generation
+  logic itself is fully real.
+
+### Verified
+- All backend files pass `node --check`; full app boot with the
+  certificates router mounted alongside every other module; live HTTP
+  checks confirm every certificate route is correctly mounted and
+  auth-guarded, and that the new `?token=` fallback works correctly in
+  all three cases (Bearer header, query token, neither).
+- `test/certificate.verify.mjs`: **21/21** checks pass — every eligibility
+  rejection case, the happy path with genuine PDF-content verification,
+  duplicate prevention, certificate-number uniqueness across
+  registrations, `ISSUE_CERTIFICATES` permission restriction, view/download
+  access control (owner/admin/stranger/missing), `listMyCertificates`
+  scoping, regenerate's explicit-confirm requirement and file cleanup,
+  and bulk generation (including the re-run-skips-duplicates case and the
+  event-not-completed rejection).
+- **All previous suites re-run with no regressions:**
+  `registration.verify.mjs` 16/16, `events.verify.mjs` 23/23,
+  `payments.verify.mjs` 18/18, `attendance.verify.mjs` 17/17.
+  **95/95 backend checks pass in total across all five modules.**
+- Flutter: every relative import/export verified to resolve to a real
+  file; every new/changed symbol manually cross-checked against its
+  definition. **`flutter analyze`/`flutter pub get` could not be run** —
+  no Flutter SDK is available in this sandbox (unchanged from every prior
+  session). **One new pub dependency was added:** `url_launcher`
+  (official Flutter-team package, extremely low risk) — there was no way
+  to open an authenticated PDF in an external viewer without it.
 
 ## 2026-07-06 — QR Attendance milestone complete
 

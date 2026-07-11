@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/admin/presentation/admin_certificates_screen.dart';
 import '../../features/admin/presentation/admin_panel_screen.dart';
 import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/application/auth_state.dart';
@@ -86,6 +87,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin',
         builder: (context, state) => const AdminPanelScreen(),
+      ),
+      GoRoute(
+        path: '/admin/certificates',
+        builder: (context, state) => const AdminCertificatesScreen(),
       ),
     ],
   );
