@@ -13,6 +13,126 @@ Certificates: ✅ Complete
 Notifications: ❌ Not Started
 Admin: 🟡 Partial
 Analytics: 🟡 Partial
+Development Mode (Firebase-less local testing): ✅ Complete — see below.
+Platform folders (android/ios/web/windows/linux/macos): ❌ Missing — see
+"Development Mode" → Platform Structure below. Requires running
+`flutter create .` locally; not something that can be safely fabricated
+without the Flutter SDK.
+
+## Development Mode
+
+**What it is:** `firebase_options.dart` ships with placeholder
+`REPLACE_ME` values until someone runs `flutterfire configure` against a
+real Firebase project. Previously, this meant the app crashed with an
+`UnsupportedError` before even reaching the Splash Screen (worse on web,
+where `DefaultFirebaseOptions.currentPlatform` throws unconditionally).
+Development Mode detects this automatically and lets the app launch and
+be manually tested anyway, with a mock login standing in for Firebase
+Authentication.
+
+**How detection works** (`lib/core/config/dev_mode.dart`):
+```dart
+bool get isFirebaseConfigured => DefaultFirebaseOptions.android.apiKey != 'REPLACE_ME';
+bool get isDevelopmentMode => !isFirebaseConfigured;
+```
+This reads the plain `android` static field directly — never
+`currentPlatform`, which throws on its own regardless of configuration
+status. **Nothing to toggle by hand.** The moment `flutterfire configure`
+overwrites `firebase_options.dart` with real values, `isFirebaseConfigured`
+flips to `true` automatically and the entire app — Firebase init, real
+phone-OTP Authentication — goes back to normal with zero further code
+changes.
+
+**What changes in Development Mode:**
+1. `main.dart` skips `Firebase.initializeApp()` entirely (logs a
+   `debugPrint` warning instead) and goes straight to `runApp`.
+2. `authControllerProvider` constructs `AuthController` with
+   `firebaseAuth: null` instead of `FirebaseAuth.instance` — this was the
+   actual crash point that needed fixing, not just the `main.dart` call:
+   `FirebaseAuth.instance` throws immediately if read before
+   `Firebase.initializeApp()` has run, and the original code read it
+   eagerly while building the provider, so skipping only the `main.dart`
+   call would still have crashed on the very first frame.
+3. `AuthController.sendOtp`/`verifyOtp` check `_firebaseAuth == null` and
+   branch to a mock path: `sendOtp` waits ~400ms and transitions straight
+   to "code sent" (any 6-digit input on the OTP screen will work —
+   there's no real code to match against); `verifyOtp` waits ~400ms and
+   creates a local `AppUser` (using whatever name/roll/branch/year was
+   typed on the signup form, or sensible defaults on the login tab) and
+   sets auth state to `authenticated`. **No Firebase call and no backend
+   call happen during mock login** — this works even with no backend
+   running at all, since the goal is reaching/clicking through screens,
+   not exercising real data flows (those were already verified against a
+   real backend contract in every prior milestone's test suite).
+4. The mock session's tokens are deliberately **not** persisted to
+   secure storage. On a fresh app relaunch, `tryAutoLogin` finds nothing
+   saved and correctly starts back at the Welcome screen instead of
+   attempting a real API call with a fake token. This means Development
+   Mode sessions don't survive an app restart — re-run the mock
+   login (any phone number, any OTP) each time. This is a deliberate,
+   documented tradeoff for simplicity, not an oversight.
+5. Everything downstream of login is completely unaffected — the router,
+   every screen, every real API integration built in Sessions 1–6 works
+   exactly as before. Screens that need a running backend (events list,
+   registrations, certificates, etc.) will show their existing
+   loading/empty/error states if no backend is reachable — that's
+   expected and correct, not a bug introduced by Development Mode.
+
+**How to reach every screen for manual testing**, once running:
+Splash → (auto) → Welcome → tap Login or Sign Up → enter any 10-digit
+phone number → Continue → OTP screen → enter any 6 digits → Verify &
+Continue → Home. From Home: category cards → Tech/Non-Tech Events list →
+tap any event → Event Detail → "Register Now" opens the Registration
+sheet. Bottom nav switches between Home / My Events / QR Scanner /
+Certificates / Profile. Admin Panel and Admin Certificates
+(`/admin`, `/admin/certificates`) are reachable directly via
+`context.push`/deep link regardless of the mock user's role (the mock
+user is always `UserRole.student`, so the Admin Panel's own in-app entry
+points may be hidden by role-based UI — but the routes themselves have
+no route-level role guard, so navigating to them directly still works
+for manual testing).
+
+**Platform Structure (android/ios/web/windows/linux/macos):** these
+directories don't exist in this project at all — only `lib/`,
+`pubspec.yaml`/`pubspec.lock`, and `analysis_options.yaml` are present.
+This is not something Development Mode fixes, and **it was deliberately
+not hand-fabricated**: generating a correct Android Gradle project, iOS
+Xcode project, or Windows/Linux/macOS CMake project by hand — without
+the actual Flutter SDK to run `flutter create` — risks producing
+plausible-looking but subtly broken build configuration (mismatched
+Gradle/AGP/Kotlin versions, missing generated UUIDs in Xcode project
+files, etc.) that would be *harder* to debug than an honestly-missing
+folder. **The developer needs to run this once, locally:**
+```
+cd apps/mobile
+flutter create .
+```
+Run from inside the existing `apps/mobile/` directory (with `lib/` and
+`pubspec.yaml` already present), this backfills only the missing
+platform folders/files — it does **not** touch `lib/`, `pubspec.yaml`, or
+`pubspec.lock`, since it detects and preserves the existing project. This
+is the standard, tool-verified way to do this; nothing else is needed
+before running `flutter pub get`.
+
+**Disabling Development Mode (switching to real Firebase):** run
+`flutterfire configure` from `apps/mobile/` against a real Firebase
+project with Phone sign-in enabled — this overwrites
+`firebase_options.dart` with real values, `isFirebaseConfigured`
+automatically becomes `true`, and every dev-mode branch in this document
+stops being reached. No manual flag, no code to revert.
+
+**Limitations of Development Mode** (beyond what's listed above):
+- It only unblocks *navigation/UI* testing. Any screen's actual data
+  (events, registrations, certificates, etc.) still requires a real,
+  reachable backend — Development Mode does not mock the backend API,
+  only Firebase Authentication.
+- The mock user is always `UserRole.student` — Organizer/Admin/
+  Super-Admin-gated UI elements (e.g. the Admin Panel's own entry point
+  in Profile, if one exists) won't appear for a mock-logged-in user, even
+  though the underlying routes are still directly reachable.
+- Push notifications, and anything else that would eventually depend on
+  a real Firebase project (FCM, once Notifications is built), are out of
+  scope for Development Mode entirely — it only covers Authentication.
 
 ## ⚠️ Important correction to prior status claims
 
@@ -623,6 +743,14 @@ Please run both locally before merging.
 
 ## Files Modified (cumulative — see CHANGELOG.md for the authoritative
 per-session breakdown)
+
+**Session 7 (Development Mode — infra, not a feature milestone)**
+- `apps/mobile/lib/core/config/dev_mode.dart` (new)
+- `apps/mobile/lib/main.dart` (skip Firebase.initializeApp when unconfigured)
+- `apps/mobile/lib/features/auth/application/auth_controller.dart`
+  (nullable `FirebaseAuth?`, mock login branches — see "Development Mode"
+  section above for the full explanation)
+- `AI_HANDOVER.md` (this file), `CHANGELOG.md`
 
 **Session 6 (Certificates milestone)**
 - `apps/backend/src/modules/certificates/certificate.model.js` (rewritten

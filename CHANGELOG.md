@@ -4,7 +4,66 @@ All notable changes to UniPulse are documented in this file.
 
 ## [Unreleased]
 
-Nothing yet — Certificates milestone is complete. Notifications is next (not started).
+Nothing yet — Notifications is next (not started). Feature milestones are
+paused; see below for the Development Mode infra change.
+
+## 2026-07-11 — Development Mode (infra, not a feature milestone)
+
+Firebase ships with placeholder `REPLACE_ME` credentials until
+`flutterfire configure` is run, which previously crashed the app before
+it could even reach the Splash Screen (an `UnsupportedError`, worse on
+web where it throws unconditionally). This change makes the app launch
+and every screen reachable for manual testing without real Firebase —
+purely a development convenience, the production Firebase/Authentication
+architecture is untouched and takes over automatically the moment real
+credentials are installed.
+
+### Added
+- `lib/core/config/dev_mode.dart`: `isFirebaseConfigured`/`isDevelopmentMode`,
+  detected by reading `DefaultFirebaseOptions.android.apiKey` directly
+  (never `currentPlatform`, which throws regardless of configuration
+  status). Nothing to toggle by hand — flips automatically once real
+  Firebase values are installed.
+- `main.dart`: skips `Firebase.initializeApp()` when unconfigured
+  (logs a `debugPrint` warning) instead of crashing.
+- `auth_controller.dart`: `FirebaseAuth` is now nullable and only
+  constructed with a real instance when Firebase is configured — this
+  was the actual crash point, not just the `main.dart` call:
+  `FirebaseAuth.instance` throws immediately if read before
+  `Firebase.initializeApp()` runs, and the provider read it eagerly, so
+  skipping only the `main.dart` call would still have crashed on the
+  first frame. `sendOtp`/`verifyOtp` branch to a local mock path when
+  Firebase is unavailable: ~400ms simulated delay, any 6-digit code
+  accepted, a local `AppUser` created from whatever was typed on the
+  signup form (or sensible defaults), auth state set to `authenticated`.
+  No Firebase call and no backend call happen during mock login. Tokens
+  are deliberately not persisted, so a mock session doesn't survive an
+  app restart (documented tradeoff, not an oversight).
+
+### Verified
+- Structural verification only (no Flutter SDK in this sandbox, as in
+  every prior session): brace/paren balance, import/export resolution,
+  and every new/changed symbol cross-checked against its definition —
+  `isFirebaseConfigured`, `AppUser`'s full constructor, `UserRole.student`.
+- All previously-registered routes already cover every screen requested
+  for manual testing (Splash, Welcome, OTP, Complete Profile, Home, Tech/
+  Non-Tech Events, Event Detail, Registration sheet, My Events, QR
+  Scanner, Certificates, Profile, Admin Panel, Admin Certificates) — no
+  new routes were needed, only removing the Firebase crash blocking all
+  of them.
+- **Not verified:** `flutter pub get`, `flutter analyze`, `flutter run -d
+  chrome`, `flutter build apk` — no Flutter SDK available in this
+  sandbox. See AI_HANDOVER.md → Known Issues.
+
+### Explicitly not done (per instruction)
+- **Platform folders** (`android/`, `ios/`, `web/`, `windows/`, `linux/`,
+  `macos/`) do not exist in this project and were **not** hand-fabricated.
+  Generating correct Gradle/Xcode/CMake project files by hand without the
+  Flutter SDK risks producing plausible-looking but broken build
+  configuration. Run `flutter create .` from `apps/mobile/` — it
+  backfills only the missing platform files without touching `lib/` or
+  `pubspec.yaml`. See AI_HANDOVER.md → "Development Mode" → Platform
+  Structure for the full explanation.
 
 ## 2026-07-09 — Certificates milestone complete
 
