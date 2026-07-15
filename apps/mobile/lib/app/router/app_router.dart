@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/admin/presentation/admin_certificates_screen.dart';
+import '../../features/admin/presentation/admin_notifications_screen.dart';
 import '../../features/admin/presentation/admin_panel_screen.dart';
 import '../../features/auth/application/auth_controller.dart';
 import '../../features/auth/application/auth_state.dart';
@@ -12,6 +13,7 @@ import '../../features/auth/presentation/welcome_auth_screen.dart';
 import '../../features/events/presentation/event_detail_screen.dart';
 import '../../features/events/presentation/event_list_screen.dart';
 import '../../features/home/presentation/home_shell.dart';
+import '../../features/notifications/presentation/notifications_screen.dart';
 import '../../features/splash/presentation/splash_screen.dart';
 
 const _authScreenPaths = {'/welcome', '/otp', '/complete-profile'};
@@ -50,7 +52,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       }
 
       final loggedOutStatuses = {AuthStatus.unauthenticated, AuthStatus.error};
-      final protectedPrefixes = ['/home', '/events', '/event', '/admin'];
+      final protectedPrefixes = ['/home', '/events', '/event', '/admin', '/notifications'];
       final isOnProtectedRoute =
           protectedPrefixes.any((prefix) => location.startsWith(prefix));
 
@@ -91,6 +93,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/certificates',
         builder: (context, state) => const AdminCertificatesScreen(),
+      ),
+      GoRoute(
+        path: '/notifications',
+        builder: (context, state) => const NotificationsScreen(),
+      ),
+      GoRoute(
+        path: '/admin/notifications',
+        builder: (context, state) => const AdminNotificationsScreen(),
       ),
     ],
   );

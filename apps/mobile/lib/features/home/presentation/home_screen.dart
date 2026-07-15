@@ -8,6 +8,7 @@ import '../../auth/application/auth_controller.dart';
 import '../../events/application/event_providers.dart';
 import '../../events/data/event_api.dart';
 import '../../events/domain/event_summary.dart';
+import '../../notifications/application/notification_providers.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -48,10 +49,7 @@ class HomeScreen extends ConsumerWidget {
                       ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: () {},
-                    icon: const Icon(Icons.notifications_none_rounded),
-                  ),
+                  _NotificationBellButton(),
                 ],
               ),
               const SizedBox(height: 22),
@@ -335,6 +333,49 @@ class _HighlightCard extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _NotificationBellButton extends ConsumerWidget {
+  const _NotificationBellButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Watching the shared inbox provider means the badge updates
+    // automatically the moment a notification is read/deleted anywhere
+    // in the app (the notifications screen calls .refresh() after every
+    // read/delete action on this same provider instance).
+    final unreadCount = ref.watch(myNotificationsProvider.select(
+      (state) => state.maybeWhen(data: (page) => page.unreadCount, orElse: () => 0),
+    ));
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          onPressed: () => context.push('/notifications'),
+          icon: const Icon(Icons.notifications_none_rounded),
+        ),
+        if (unreadCount > 0)
+          Positioned(
+            top: 6,
+            right: 6,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFF3B30),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              constraints: const BoxConstraints(minWidth: 16),
+              child: Text(
+                unreadCount > 99 ? '99+' : '$unreadCount',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

@@ -10,7 +10,7 @@ Events: ✅ Complete
 Payments: ✅ Complete
 QR Attendance: ✅ Complete
 Certificates: ✅ Complete
-Notifications: ❌ Not Started
+Notifications: ✅ Complete
 Admin: 🟡 Partial
 Analytics: 🟡 Partial
 Development Mode (Firebase-less local testing): ✅ Complete — see below.
@@ -260,9 +260,75 @@ through the mock list.
 **Phase 4 (Payments milestone): complete and build-verified.**
 **Phase 5 (QR Attendance milestone): complete and build-verified.**
 **Phase 6 (Certificates milestone): complete and build-verified.**
-Notifications and Analytics have deliberately **not** been started — per
-explicit scope instruction, only the Certificates milestone was
-completed this session.
+**Phase 7 (Notifications milestone): complete and build-verified.**
+Analytics has deliberately **not** been started — per explicit scope
+instruction, only the Notifications milestone was completed this
+session. (Session 7 was the Development Mode infra change, not a
+numbered feature phase — see its own section below.)
+
+## Session 8: Notifications Milestone
+
+### What was built
+**Backend:**
+- `notification.model.js` extended with `recipientCount` on
+  `Notification`, plus a new `NotificationRecipient` model — one row per
+  (notification, student), carrying `isRead`/`readAt`/soft-delete
+  (`deletedAt`). This is what a student's inbox is actually queried from;
+  read/unread/delete are meaningless on the shared broadcast document.
+- `src/config/firebase-messaging.js` (new): `sendPushNotification`,
+  mirroring the `firebase.js`/Development-Mode pattern — real
+  `firebase-admin/messaging` when configured, a logging mock provider
+  when not. Never throws; push failure never blocks in-app delivery.
+- `notification.service.js`: `resolveAudienceUserIds` for all six
+  audience types (College/Branch/Year/Club/Event Participants/Individual
+  Student — see CHANGELOG.md for the Club-audience scope note, since
+  there's no club-membership list in this schema), `sendNotification`,
+  and the inbox/history operations (list mine, mark read/read-all,
+  soft-delete, admin history).
+- `notification.controller.js`/`routes.js` at `/api/notifications`.
+- `test/notification.verify.mjs` (new, 25/25 passing).
+
+### Bug caught and fixed
+Same class of bug as Certificates' `regeneratedCount` issue:
+`sendNotification` relied on the Mongoose schema default for
+`isRead: false`, which the mock-model test (consistent with every prior
+milestone's mocks) doesn't apply — caught via a wrong `unreadCount`.
+Fixed by setting `isRead`/`readAt`/`deletedAt` explicitly at creation.
+
+### Flutter
+- Student: `notifications_screen.dart` (new) — inbox with clear
+  read/unread styling, pull-to-refresh, swipe-to-delete, tap-to-open
+  (marks read + deep-links to the related event if the notification's
+  audience references one). Home screen's bell icon now navigates there
+  and shows a live unread badge.
+- Admin: `admin_notifications_screen.dart` (new) — a Send/History tabbed
+  screen: audience-type dropdown with the matching required field shown
+  conditionally, a live preview, a confirmation dialog, and success/error
+  feedback reporting recipient count + whether the push was mocked.
+  Reachable from the Admin Panel's previously-decorative "Notifications"
+  tile. Same pragmatic id-input scope choice as `admin_certificates_screen.dart`
+  (no picker UI exists yet for clubs/events/students).
+- Router: added `/notifications`, `/admin/notifications`.
+
+### Verified
+`test/notification.verify.mjs`: 25/25 pass, covering all six audience
+types (including validation and invalid-reference rejection for each),
+the real mock push provider (no Firebase Admin credentials exist in this
+test process, so this genuinely exercises the fallback, not a stand-in),
+read/unread, delete, and history pagination. All five prior suites
+re-run with no regressions — **120/120 backend checks pass in total.**
+Live HTTP smoke tests confirm the notification routes are mounted and
+auth-guarded alongside every other module. Flutter: same manual
+verification discipline as every session (import/export resolution +
+symbol cross-referencing) — no Flutter SDK available in this sandbox.
+**No new pub dependency was added** this session.
+
+## Session 7: Development Mode (infra, not a numbered feature phase)
+
+See CHANGELOG.md's 2026-07-11 entry and the dedicated "Development Mode"
+section near the top of this document for the full writeup — not
+duplicated here to avoid drift between two copies of the same
+explanation.
 
 ## Session 6: Certificates Milestone
 
@@ -580,37 +646,33 @@ incompatibilities) that manual review cannot.
 
 1. **Firebase project setup** (developer action required, unchanged from
    prior sessions) — still blocks on-device testing of everything.
-2. **Notifications** (not started): Flutter has no `firebase_messaging`
-   wiring at all yet (only `firebase_auth`/`firebase_core` were added in
-   Session 1).
-3. **Analytics** (not started beyond the one overview endpoint from
-   before Session 1).
-4. **Certificates — remaining gaps** (deliberately out of scope this
+2. **Analytics** (not started beyond the one overview endpoint from
+   before Session 1) — the only remaining unstarted feature milestone.
+3. **Notifications — remaining gaps** (deliberately out of scope this
    session):
-   - **No participant/event picker UI for admins** — `admin_certificates_screen.dart`
-     takes registration/event/certificate ids as raw text input. This is
-     workable but not great UX; a proper picker needs the
-     `GET /registrations/event/:eventId` list (already exists, from
-     Session 2) wired into a selectable UI — natural Admin Panel work.
-   - **No certificate template upload UI** — the backend supports
-     `POST /certificates/templates` (name/backgroundUrl/htmlTemplate
-     metadata, same URL-based pattern as Events' gallery images), but
-     there's no Flutter screen for creating one yet, and no Cloudinary
-     wiring to actually upload a background image file (same gap noted
-     for Events' gallery images).
-   - **No live bulk-generation progress** — `bulk-generate` is a single
-     synchronous request/response; the "progress UI" is a spinner while
-     waiting, then a final summary, not a live per-student progress
-     stream. True streaming progress would need websockets or polling a
-     job-status endpoint, which is a bigger change than this milestone's
-     scope.
-   - Certificate PDFs are visually simple (no custom template rendering
-     yet) — `writeCertificatePdf` always produces the same layout,
-     regardless of a template's `backgroundUrl`/`htmlTemplate`, since
-     rendering an arbitrary HTML template or fetching a remote background
-     image would add real complexity and a network dependency during PDF
-     generation. Templates currently only affect the certificate's title
-     text (`templateName`).
+   - **No `firebase_messaging` in Flutter** — the backend's push
+     abstraction (`firebase-messaging.js`) and `User.fcmTokens` are fully
+     ready, but nothing in the Flutter app captures/registers a device
+     token yet, so real push delivery has no addressable devices even
+     once a real Firebase project is configured. Only the in-app
+     inbox (`NotificationRecipient`) actually delivers anything
+     end-to-end today — which was this milestone's primary target.
+   - **No live "send progress"** — `POST /notifications` is a single
+     synchronous request/response, same simplification as Certificates'
+     bulk-generate; the "loading state" is a spinner + final result, not
+     a streaming per-recipient progress bar.
+   - **No audience/participant picker UI** — `admin_notifications_screen.dart`
+     takes club/event/student ids as raw text input, same pragmatic
+     scope choice as `admin_certificates_screen.dart`.
+   - **"Club" audience is approximated** — there's no club-membership
+     list in this schema, so it targets everyone who registered for at
+     least one of the club's events instead. Documented in CHANGELOG.md.
+4. **Certificates — remaining gaps** (unchanged from Session 6):
+   - No participant/event picker UI for admins (raw id input instead).
+   - No certificate template upload UI / Cloudinary wiring.
+   - No live bulk-generation progress stream.
+   - Certificate PDFs use a fixed layout regardless of template
+     `backgroundUrl`/`htmlTemplate`.
 5. **QR Attendance — remaining gaps** (unchanged from Session 5): no
    attendance list/export screen; QR scanner doesn't pre-select an event.
 6. **Payments — remaining gaps** (unchanged from Session 4): no refund
@@ -623,14 +685,13 @@ incompatibilities) that manual review cannot.
 ## Next Recommended Task
 
 Per the instruction that came with this milestone, **stop here** — do not
-start Notifications or Analytics until told to continue. If resuming,
-Notifications is the natural next step: FCM sending by audience
-(college/branch/year/club/event participants/individual), which needs
-`firebase_messaging` added to the Flutter app (currently absent — only
-`firebase_auth`/`firebase_core` exist) and a notifications-sending
-service on the backend (the `Notification` model already exists,
-unused, same situation `Payment`/`Attendance`/`Certificate` were in
-before their respective milestones).
+start Analytics until told to continue. If resuming, Analytics is the
+only remaining unstarted feature milestone: the backend has one overview
+endpoint from before Session 1 and nothing else; the Flutter admin panel
+shows entirely static/mock stats. A real implementation would aggregate
+real data that now exists across every completed module — registrations,
+payments, attendance, certificates, notification engagement — into
+whatever metrics the next spec asks for.
 
 ## Session 2: Registration Milestone
 
@@ -694,14 +755,15 @@ Please run both locally before merging.
    verified with mock-backed test scripts (`test/registration.verify.mjs`
    16/16, `test/events.verify.mjs` 23/23, `test/payments.verify.mjs`
    18/18, `test/attendance.verify.mjs` 17/17, `test/certificate.verify.mjs`
-   21/21 — **95/95 combined**) plus `node --check` and live HTTP smoke
-   tests every session. Flutter code is verified via import/export-
-   resolution + manual symbol cross-referencing each session (this caught
-   a real broken-string-interpolation bug in Session 3 — see
-   CHANGELOG.md), but is **not** compiled. Run
-   `flutter pub get && flutter analyze` before trusting this fully —
-   **both `qr_flutter` (Session 5) and `url_launcher` (Session 6) are new
-   dependencies that have NOT been verified to resolve.**
+   21/21, `test/notification.verify.mjs` 25/25 — **120/120 combined**)
+   plus `node --check` and live HTTP smoke tests every session. Flutter
+   code is verified via import/export-resolution + manual symbol
+   cross-referencing each session (this caught a real
+   broken-string-interpolation bug in Session 3 — see CHANGELOG.md), but
+   is **not** compiled. Run `flutter pub get && flutter analyze` before
+   trusting this fully — **both `qr_flutter` (Session 5) and
+   `url_launcher` (Session 6) are new dependencies that have NOT been
+   verified to resolve.** No new dependency was added in Session 8.
 4. The default `collegeCode` is still hardcoded to `'UNIPULSE'` — unchanged
    from Session 1, still a known gap for multi-college deployments.
 5. **GitHub push could not be completed from this sandbox.** Network
@@ -740,6 +802,15 @@ Please run both locally before merging.
     participant/event picker UI exists yet. The generation logic is
     fully real; only the input method is a placeholder until Admin Panel
     gets real data (see Pending Work).
+13. **No `firebase_messaging` in Flutter — real push notifications have
+    no addressable devices yet.** The backend push abstraction and
+    `User.fcmTokens` are ready; nothing captures/registers a device token
+    client-side. Only the in-app inbox delivers end-to-end today. See
+    Pending Work (Notifications — remaining gaps).
+14. **`admin_notifications_screen.dart` takes club/event/student ids as
+    raw text input**, same scope choice as #12. The "Club" audience type
+    is also an approximation (registrants of the club's events, since
+    there's no club-membership list) — see CHANGELOG.md.
 
 ## Files Modified (cumulative — see CHANGELOG.md for the authoritative
 per-session breakdown)
@@ -751,6 +822,27 @@ per-session breakdown)
   (nullable `FirebaseAuth?`, mock login branches — see "Development Mode"
   section above for the full explanation)
 - `AI_HANDOVER.md` (this file), `CHANGELOG.md`
+
+**Session 8 (Notifications milestone)**
+- `apps/backend/src/modules/notifications/notification.model.js`
+  (extended: `recipientCount`, new `NotificationRecipient`)
+- `apps/backend/src/modules/notifications/notification.service.js` (new)
+- `apps/backend/src/modules/notifications/notification.controller.js` (new)
+- `apps/backend/src/modules/notifications/notification.routes.js` (new)
+- `apps/backend/src/config/firebase-messaging.js` (new — mock/real push abstraction)
+- `apps/backend/src/routes/index.js` (mounted the new router)
+- `apps/backend/test/notification.verify.mjs` (new — verification harness, 25/25)
+- `apps/mobile/lib/features/notifications/domain/app_notification.dart` (new)
+- `apps/mobile/lib/features/notifications/data/notification_api.dart` (new)
+- `apps/mobile/lib/features/notifications/application/notification_providers.dart` (new)
+- `apps/mobile/lib/features/notifications/presentation/notifications_screen.dart` (new)
+- `apps/mobile/lib/features/admin/presentation/admin_notifications_screen.dart` (new)
+- `apps/mobile/lib/features/admin/presentation/admin_panel_screen.dart`
+  (wired the existing "Notifications" tile)
+- `apps/mobile/lib/features/home/presentation/home_screen.dart` (bell icon
+  → `/notifications` + live unread badge)
+- `apps/mobile/lib/app/router/app_router.dart` (added `/notifications`,
+  `/admin/notifications`)
 
 **Session 6 (Certificates milestone)**
 - `apps/backend/src/modules/certificates/certificate.model.js` (rewritten

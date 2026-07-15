@@ -4,8 +4,121 @@ All notable changes to UniPulse are documented in this file.
 
 ## [Unreleased]
 
-Nothing yet — Notifications is next (not started). Feature milestones are
-paused; see below for the Development Mode infra change.
+Nothing yet — Notifications milestone is complete. Analytics is next
+(not started).
+
+## 2026-07-14 — Notifications milestone complete
+
+### Added — Backend
+- `notification.model.js` extended: `Notification` (the broadcast record)
+  gained `recipientCount`; a new `NotificationRecipient` model tracks
+  per-user delivery/read state (`isRead`, `readAt`, soft-delete via
+  `deletedAt`) — this is what a student's inbox is actually queried from,
+  since read/unread and delete are meaningless on the shared broadcast
+  document itself. Unique index on `(collegeId, notificationId, userId)`.
+- `src/config/firebase-messaging.js` (new): `sendPushNotification`
+  abstraction over `firebase-admin/messaging`. When Firebase Admin isn't
+  configured (Development Mode), it falls back to a mock provider that
+  logs what would have been sent and returns a synthetic success result
+  — the same graceful-degradation pattern as `firebase.js`. Never throws;
+  a push failure never blocks the in-app notification, which is the
+  primary delivery mechanism this milestone builds.
+- `notification.service.js`: `resolveAudienceUserIds` resolves all six
+  audience types — **College**, **Branch**, **Year** (Active students
+  only, since Organizers/Admins don't have branch/year), **Club**
+  (approximated as everyone registered for at least one of the club's
+  non-cancelled events — documented scope choice, since there's no
+  club-membership list in this schema), **Event Participants**
+  (non-cancelled registrants), and **Individual Student** — each
+  validating its own required field and rejecting invalid
+  club/event/user references with a clear 422. `sendNotification`
+  creates the broadcast, bulk-inserts one `NotificationRecipient` per
+  matched student, and makes a best-effort push attempt using recipients'
+  `fcmTokens` (already present on `User` from earlier scaffolding, unused
+  until now). Rejects with `NO_RECIPIENTS` (422) if the audience matches
+  nobody. Also: `listMyNotifications` (paginated, with `unreadCount`),
+  `markNotificationRead`, `markAllNotificationsRead`,
+  `deleteMyNotification` (soft delete), `listNotificationHistory`
+  (paginated, admin).
+- `notification.controller.js` + `routes.js`, mounted at
+  `/api/notifications`: `GET /me`, `PATCH /:id/read`, `POST /read-all`,
+  `DELETE /:id` (all authenticated, ownership-checked); `POST /` and
+  `GET /history` (`SEND_NOTIFICATIONS` permission — Admin/Super Admin).
+- `apps/backend/test/notification.verify.mjs` (new): mock-backed harness
+  covering every audience type, validation, the real mock push provider
+  (no Firebase Admin credentials exist in this test process, so this
+  genuinely exercises the fallback path, not a stand-in for it),
+  read/unread, delete, and history pagination. **25/25 checks pass.**
+
+### Fixed
+- `sendNotification` relied on the Mongoose schema default for
+  `isRead: false` on newly-created `NotificationRecipient` rows — same
+  class of bug as the Certificates milestone's `regeneratedCount` issue,
+  and caught the same way: the mock-model test doesn't apply schema
+  defaults, so `unreadCount` came out wrong until `isRead`/`readAt`/
+  `deletedAt` were set explicitly at creation. Harmless in real MongoDB
+  (`insertMany` does apply schema defaults there), but explicit is more
+  robust regardless of the ODM.
+
+### Added — Flutter
+**Student:**
+- `features/notifications/` (domain/data/application): `AppNotification`,
+  `NotificationAudience`, `SentNotification` models; `NotificationApi`
+  (inbox fetch/read/read-all/delete, admin send/history);
+  `myNotificationsProvider` (refreshable inbox state, also the source for
+  the Home screen's unread badge).
+- `notifications_screen.dart` (new): inbox list with clear read/unread
+  styling (unread = tinted background + dot indicator), pull-to-refresh,
+  swipe-to-delete, tap-to-open (marks read, then deep-links to the
+  related event via `/event/:id` if the notification's audience
+  references one — e.g. an Event Participants or Club send), "mark all
+  read", and loading/empty/error states.
+- Home screen: the previously-decorative bell icon now navigates to
+  `/notifications` and shows a live unread-count badge
+  (`ref.watch(myNotificationsProvider.select(...))`), which updates
+  automatically after any read/delete action since they all go through
+  the same shared provider instance.
+
+**Admin:**
+- `admin_notifications_screen.dart` (new): a Send/History tabbed screen.
+  Send: title/body fields, an audience-type dropdown with the matching
+  required field shown conditionally (branch/year/club id/event id/
+  student id — same pragmatic id-input pattern as
+  `admin_certificates_screen.dart`, since no picker UI exists yet), a
+  live preview card, a confirmation dialog before sending, and a
+  success/error snackbar that reports the recipient count and whether
+  the push was mocked (Development Mode visibility). History: paginated
+  list of past broadcasts with audience/recipient count/status/date.
+  Reachable from the Admin Panel's previously-decorative "Notifications"
+  tile.
+- Router: added `/notifications` and `/admin/notifications`
+  (`/notifications` added to the auth-guard's protected-route prefixes).
+
+### Development Mode
+No changes needed — the mock push provider (`firebase-messaging.js`) uses
+the same Firebase-configured-or-not detection as every other Firebase
+touchpoint, so sending notifications continues to work end-to-end (in-app
+delivery + mocked push logging) whether or not `flutterfire configure`
+has been run. Verified by the fact that `notification.verify.mjs` itself
+has no real Firebase Admin credentials and every push in that suite goes
+through the mock path.
+
+### Verified
+- All backend files pass `node --check`; full app boot with the
+  notifications router mounted alongside every other module; live HTTP
+  checks confirm every notification route is correctly mounted and
+  auth-guarded.
+- `test/notification.verify.mjs`: **25/25** checks pass.
+- **All previous suites re-run with no regressions:**
+  `registration.verify.mjs` 16/16, `events.verify.mjs` 23/23,
+  `payments.verify.mjs` 18/18, `attendance.verify.mjs` 17/17,
+  `certificate.verify.mjs` 21/21. **120/120 backend checks pass in total
+  across all six modules.**
+- Flutter: every relative import/export verified to resolve to a real
+  file; every new/changed symbol manually cross-checked against its
+  definition. **`flutter analyze`/`flutter pub get` could not be run** —
+  no Flutter SDK is available in this sandbox (unchanged from every
+  prior session). **No new pub dependency was added.**
 
 ## 2026-07-11 — Development Mode (infra, not a feature milestone)
 

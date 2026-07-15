@@ -65,7 +65,11 @@ class AdminPanelScreen extends StatelessWidget {
                 Icons.workspace_premium,
                 onTap: () => context.push('/admin/certificates'),
               ),
-              const _Action('Notifications', Icons.campaign),
+              _Action(
+                'Notifications',
+                Icons.campaign,
+                onTap: () => context.push('/admin/notifications'),
+              ),
               const _Action('Admins', Icons.admin_panel_settings),
               const _Action('Analytics', Icons.bar_chart),
             ],
