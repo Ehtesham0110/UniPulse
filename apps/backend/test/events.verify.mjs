@@ -19,6 +19,12 @@ function matches(doc, query) {
       if (!value.test(doc[key] ?? '')) return false;
       continue;
     }
+    if (value && typeof value === 'object' && ('$gte' in value || '$lte' in value)) {
+      const docVal = doc[key] instanceof Date ? doc[key] : new Date(doc[key]);
+      if (value.$gte && docVal < value.$gte) return false;
+      if (value.$lte && docVal > value.$lte) return false;
+      continue;
+    }
     if (String(doc[key]) !== String(value)) return false;
   }
   return true;
@@ -250,6 +256,19 @@ let publishedEventId;
   const unbookmarked = await call(toggleBookmark, { params: { eventId: 'event_nontech' }, user: student, collegeId });
   assert.equal(unbookmarked.body.data.isBookmarked, false);
   ok('toggleBookmark un-bookmarks on a second call');
+}
+
+// ---- listEvents: startDate / endDate range query ----
+{
+  const rangeQuery = await call(listEvents, {
+    query: { startDate: '2026-07-01', endDate: '2026-07-31' },
+    user: student,
+    collegeId,
+  });
+  assert.equal(rangeQuery.status, 200);
+  assert.ok(Array.isArray(rangeQuery.body.data));
+  assert.ok(rangeQuery.body.data.every((e) => new Date(e.eventDate) >= new Date('2026-07-01') && new Date(e.eventDate) <= new Date('2026-07-31')));
+  ok('listEvents filters events correctly by startDate and endDate range');
 }
 
 // ---- updateEvent: permissions + validation ----

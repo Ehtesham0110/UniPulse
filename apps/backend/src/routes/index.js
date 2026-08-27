@@ -9,6 +9,7 @@ import { paymentRouter } from '../modules/payments/payment.routes.js';
 import { attendanceRouter } from '../modules/attendance/attendance.routes.js';
 import { certificateRouter } from '../modules/certificates/certificate.routes.js';
 import { notificationRouter } from '../modules/notifications/notification.routes.js';
+import { adminRouter } from '../modules/admins/admin.routes.js';
 
 export const apiRouter = Router();
 
@@ -22,4 +23,5 @@ apiRouter.use('/payments', paymentRouter);
 apiRouter.use('/attendance', attendanceRouter);
 apiRouter.use('/certificates', certificateRouter);
 apiRouter.use('/notifications', notificationRouter);
+apiRouter.use('/admins', adminRouter);
 

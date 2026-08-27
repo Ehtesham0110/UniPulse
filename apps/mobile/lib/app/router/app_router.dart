@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/admin/presentation/admin_certificates_screen.dart';
+import '../../features/admin/presentation/admin_event_form_screen.dart';
 import '../../features/admin/presentation/admin_notifications_screen.dart';
 import '../../features/admin/presentation/admin_panel_screen.dart';
 import '../../features/auth/application/auth_controller.dart';
@@ -10,6 +11,7 @@ import '../../features/auth/application/auth_state.dart';
 import '../../features/auth/presentation/complete_profile_screen.dart';
 import '../../features/auth/presentation/otp_screen.dart';
 import '../../features/auth/presentation/welcome_auth_screen.dart';
+import '../../features/events/presentation/event_calendar_screen.dart';
 import '../../features/events/presentation/event_detail_screen.dart';
 import '../../features/events/presentation/event_list_screen.dart';
 import '../../features/home/presentation/home_shell.dart';
@@ -52,12 +54,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       }
 
       final loggedOutStatuses = {AuthStatus.unauthenticated, AuthStatus.error};
-      final protectedPrefixes = ['/home', '/events', '/event', '/admin', '/notifications'];
+      final protectedPrefixes = ['/home', '/events', '/event', '/calendar', '/admin', '/notifications'];
       final isOnProtectedRoute =
           protectedPrefixes.any((prefix) => location.startsWith(prefix));
 
       if (loggedOutStatuses.contains(authStatus) && isOnProtectedRoute) {
         return '/welcome';
+      }
+
+      // Guard all Admin routes so Students can never access Admin Panel
+      if (location.startsWith('/admin')) {
+        final user = ref.read(authControllerProvider).user;
+        if (user == null || !user.role.canSeeAdminPanel) {
+          return '/home';
+        }
       }
 
       return null;
@@ -75,6 +85,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: '/home', builder: (context, state) => const HomeShell()),
       GoRoute(
+        path: '/calendar',
+        builder: (context, state) => const EventCalendarScreen(),
+      ),
+      GoRoute(
         path: '/events/:category',
         builder: (context, state) => EventListScreen(
           category: state.pathParameters['category'] ?? 'Non Tech',
@@ -89,6 +103,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin',
         builder: (context, state) => const AdminPanelScreen(),
+      ),
+      GoRoute(
+        path: '/admin/events/new',
+        builder: (context, state) => const AdminEventFormScreen(),
+      ),
+      GoRoute(
+        path: '/admin/events/edit/:id',
+        builder: (context, state) => AdminEventFormScreen(
+          eventId: state.pathParameters['id'],
+        ),
       ),
       GoRoute(
         path: '/admin/certificates',

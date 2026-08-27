@@ -98,10 +98,10 @@ class _WelcomeAuthScreenState extends ConsumerState<WelcomeAuthScreen> {
         child: Stack(
           children: [
             ListView(
-              padding: const EdgeInsets.fromLTRB(24, 18, 24, 160),
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 96),
               children: [
                 const _CampusHero(),
-                const SizedBox(height: 28),
+                const SizedBox(height: 20),
                 RichText(
                   textAlign: TextAlign.center,
                   text: const TextSpan(
@@ -125,12 +125,12 @@ class _WelcomeAuthScreenState extends ConsumerState<WelcomeAuthScreen> {
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Color(0xFF6B6D80)),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 22),
                 _AuthToggle(
                   isLogin: isLogin,
                   onChanged: (value) => setState(() => isLogin = value),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 18),
                 AnimatedSwitcher(
                   duration: const Duration(milliseconds: 240),
                   child: isLogin
@@ -145,7 +145,7 @@ class _WelcomeAuthScreenState extends ConsumerState<WelcomeAuthScreen> {
                           onYearChanged: (y) => setState(() => _signupYear = y),
                         ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 18),
                 GradientButton(
                   label: isLoading
                       ? 'Please wait…'
@@ -159,7 +159,9 @@ class _WelcomeAuthScreenState extends ConsumerState<WelcomeAuthScreen> {
               left: 0,
               right: 0,
               bottom: 0,
-              child: CampusTreeFooter(height: 120),
+              child: IgnorePointer(
+                child: CampusTreeFooter(height: 40, fadeTop: true),
+              ),
             ),
           ],
         ),
@@ -174,13 +176,27 @@ class _CampusHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 210,
+      height: 290,
       decoration: BoxDecoration(
         color: const Color(0xFFFFF4E8),
         borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
-      child: const Center(
-        child: Icon(Icons.school_rounded, size: 110, color: Color(0xFFFF7A1A)),
+      clipBehavior: Clip.antiAlias,
+      // BoxFit.cover + a downward alignment bias crops out most of the
+      // empty sky in the source illustration and keeps the students —
+      // the actual subject — as the focal point, filling the card edge
+      // to edge instead of floating in a padded box.
+      child: Image.asset(
+        'assets/illustrations/campus_students.png',
+        fit: BoxFit.cover,
+        alignment: const Alignment(0, 0.35),
       ),
     );
   }
@@ -274,11 +290,11 @@ class _LoginForm extends StatelessWidget {
   Widget build(BuildContext context) {
     return _FormCard(
       children: [
-        const Icon(Icons.phone_iphone_rounded, color: Color(0xFFFF5A1A), size: 34),
-        const SizedBox(height: 24),
+        const Icon(Icons.phone_iphone_rounded, color: Color(0xFFFF5A1A), size: 32),
+        const SizedBox(height: 18),
         const _Label('Phone Number'),
         _Input(prefix: '+91', hint: '98765 43210', controller: phoneController),
-        const SizedBox(height: 18),
+        const SizedBox(height: 14),
         const Text(
           'We will send you a secure OTP',
           textAlign: TextAlign.center,
@@ -314,10 +330,10 @@ class _SignupForm extends StatelessWidget {
       children: [
         const _Label('Full Name'),
         _Input(hint: 'Enter your full name', controller: nameController),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         const _Label('Roll Number'),
         _Input(hint: 'e.g. VU3F2526129', controller: rollController),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         const _Label('Branch'),
         const SizedBox(height: 8),
         Wrap(
@@ -331,7 +347,7 @@ class _SignupForm extends StatelessWidget {
                   ))
               .toList(),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         const _Label('Year'),
         const SizedBox(height: 8),
         Wrap(
@@ -344,7 +360,7 @@ class _SignupForm extends StatelessWidget {
                   ))
               .toList(),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         const _Label('Phone Number'),
         _Input(prefix: '+91', hint: '98765 43210', controller: phoneController),
       ],
@@ -360,7 +376,7 @@ class _FormCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),

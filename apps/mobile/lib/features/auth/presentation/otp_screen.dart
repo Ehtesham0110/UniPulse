@@ -92,34 +92,30 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       body: Stack(
         children: [
           ListView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 150),
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 90),
             children: [
-              const Icon(
-                Icons.lock_rounded,
-                size: 120,
-                color: Color(0xFFFF6B1A),
-              ),
-              const SizedBox(height: 24),
+              _OtpHero(),
+              const SizedBox(height: 18),
               const Text(
                 'Enter the OTP',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800),
+                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               const Text(
                 'We have sent a 6-digit OTP to your mobile number',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Color(0xFF696C7E)),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               Text(
                 phoneDisplay,
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
               ),
-              const SizedBox(height: 34),
+              const SizedBox(height: 26),
               Container(
-                padding: const EdgeInsets.all(22),
+                padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(22),
@@ -137,7 +133,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                       'Enter 6-digit OTP',
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: List.generate(
@@ -168,12 +164,12 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
                     TextButton(
                       onPressed: isLoading ? null : _resend,
                       child: const Text('Didn\'t get the code? Resend OTP'),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     GradientButton(
                       label: isLoading ? 'Verifying…' : 'Verify & Continue',
                       icon: Icons.arrow_forward,
@@ -192,9 +188,41 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
             left: 0,
             right: 0,
             bottom: 0,
-            child: CampusTreeFooter(height: 120),
+            child: IgnorePointer(
+              child: CampusTreeFooter(height: 40, fadeTop: true),
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Same crop/cover treatment as the Welcome screen's hero, sized ~25%
+/// larger than the old inline `ClipRRect` version and wrapped so it can
+/// carry a subtle shadow (a bare `ClipRRect` can't paint one).
+class _OtpHero extends StatelessWidget {
+  const _OtpHero();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 225,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Image.asset(
+        'assets/illustrations/campus_students.png',
+        fit: BoxFit.cover,
+        alignment: const Alignment(0, 0.35),
       ),
     );
   }

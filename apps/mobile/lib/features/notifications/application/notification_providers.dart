@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../auth/application/auth_controller.dart';
 import '../data/notification_api.dart';
-import '../domain/app_notification.dart';
 
 final notificationApiProvider = Provider<NotificationApi>((ref) {
   return NotificationApi(ref.watch(apiClientProvider).dio);

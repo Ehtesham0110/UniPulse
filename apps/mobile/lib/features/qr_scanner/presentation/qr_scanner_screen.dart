@@ -1,15 +1,89 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../attendance/application/attendance_providers.dart';
 import '../../attendance/data/attendance_api.dart';
 import '../../attendance/domain/scanned_attendee.dart';
 import '../../auth/application/auth_controller.dart';
+import '../../events/application/event_providers.dart';
+import '../../events/data/event_api.dart';
 
 enum _ScanState { scanning, validating, attendeeInfo, actionLoading, success, failure }
+
+enum QrPayloadType { poster, attendance, unknown }
+
+class QrPayload {
+  const QrPayload._({required this.type, this.eventId, this.attendanceToken});
+
+  final QrPayloadType type;
+  final String? eventId;
+  final String? attendanceToken;
+
+  factory QrPayload.parse(String rawValue) {
+    final trimmed = rawValue.trim();
+    if (trimmed.isEmpty) return const QrPayload._(type: QrPayloadType.unknown);
+
+    // 1. JSON Payload (e.g. {"eventId": "..."}, {"id": "...", "type": "poster"}, {"qrToken": "..."})
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        final Map<String, dynamic> data = jsonDecode(trimmed) as Map<String, dynamic>;
+        if (data['eventId'] is String && (data['eventId'] as String).trim().isNotEmpty) {
+          return QrPayload._(type: QrPayloadType.poster, eventId: (data['eventId'] as String).trim());
+        }
+        if (data['id'] is String && (data['id'] as String).trim().isNotEmpty) {
+          return QrPayload._(type: QrPayloadType.poster, eventId: (data['id'] as String).trim());
+        }
+        if (data['qrToken'] is String && (data['qrToken'] as String).trim().isNotEmpty) {
+          return QrPayload._(
+            type: QrPayloadType.attendance,
+            attendanceToken: (data['qrToken'] as String).trim(),
+          );
+        }
+      } catch (_) {}
+    }
+
+    // 2. Deep-link or Web URL Payload (e.g. https://unipulse.app/event/<id> or unipulse://event/<id>)
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('unipulse://')) {
+      final uri = Uri.tryParse(trimmed);
+      if (uri != null && uri.pathSegments.isNotEmpty) {
+        final eventIdx = uri.pathSegments.indexOf('event');
+        final eventsIdx = uri.pathSegments.indexOf('events');
+        if (eventIdx != -1 && eventIdx + 1 < uri.pathSegments.length) {
+          return QrPayload._(type: QrPayloadType.poster, eventId: uri.pathSegments[eventIdx + 1]);
+        }
+        if (eventsIdx != -1 && eventsIdx + 1 < uri.pathSegments.length) {
+          return QrPayload._(type: QrPayloadType.poster, eventId: uri.pathSegments[eventsIdx + 1]);
+        }
+      }
+    }
+
+    // 3. Attendance Token (<registrationId>.<hmacSignature>)
+    if (trimmed.contains('.')) {
+      final parts = trimmed.split('.');
+      if (parts.length == 2 && parts[0].trim().isNotEmpty && parts[1].trim().isNotEmpty) {
+        return QrPayload._(type: QrPayloadType.attendance, attendanceToken: trimmed);
+      }
+    }
+
+    // 4. Plain Mongo ObjectId / Event ID (24 hex characters)
+    final objectIdRegex = RegExp(r'^[a-fA-F0-9]{24}$');
+    if (objectIdRegex.hasMatch(trimmed)) {
+      return QrPayload._(type: QrPayloadType.poster, eventId: trimmed);
+    }
+
+    // 5. General Alphanumeric Event Identifier Fallback
+    if (!trimmed.contains(' ') && !trimmed.contains('/') && !trimmed.contains('.')) {
+      return QrPayload._(type: QrPayloadType.poster, eventId: trimmed);
+    }
+
+    return const QrPayload._(type: QrPayloadType.unknown);
+  }
+}
 
 class QrScannerScreen extends ConsumerStatefulWidget {
   const QrScannerScreen({super.key});
@@ -35,7 +109,7 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
     super.dispose();
   }
 
-  bool get _canScan => ref.read(authControllerProvider).user?.role.canScanAttendance ?? false;
+  bool get _canScanAttendance => ref.read(authControllerProvider).user?.role.canScanAttendance ?? false;
 
   void _onDetect(BarcodeCapture capture) {
     if (_isProcessing || _state != _ScanState.scanning) return;
@@ -43,7 +117,54 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
     if (rawValue == null || rawValue.isEmpty) return;
 
     _isProcessing = true;
-    _validate(rawValue);
+    _processQr(rawValue);
+  }
+
+  Future<void> _processQr(String rawValue) async {
+    final payload = QrPayload.parse(rawValue);
+
+    switch (payload.type) {
+      case QrPayloadType.poster:
+        await _handlePosterQr(payload.eventId!);
+        break;
+
+      case QrPayloadType.attendance:
+        await _validate(payload.attendanceToken!);
+        break;
+
+      case QrPayloadType.unknown:
+        setState(() {
+          _resultMessage = 'This QR code is not recognized by UniPulse.';
+          _resultReason = 'INVALID_QR';
+          _state = _ScanState.failure;
+        });
+        break;
+    }
+  }
+
+  Future<void> _handlePosterQr(String eventId) async {
+    setState(() => _state = _ScanState.validating);
+    unawaited(_controller.stop());
+
+    try {
+      final event = await ref.read(eventApiProvider).getEvent(eventId);
+      if (!mounted) return;
+
+      _scanNext();
+      await context.push('/event/${event.id}');
+    } on EventApiException catch (error) {
+      setState(() {
+        _resultMessage = error.message;
+        _resultReason = error.statusCode == 404 ? 'EVENT_NOT_FOUND' : 'INVALID_QR';
+        _state = _ScanState.failure;
+      });
+    } catch (_) {
+      setState(() {
+        _resultMessage = 'Could not fetch event details. Check your connection.';
+        _resultReason = null;
+        _state = _ScanState.failure;
+      });
+    }
   }
 
   Future<void> _validate(String qrToken) async {
@@ -80,7 +201,7 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
     try {
       final attendee = await ref.read(attendanceApiProvider).checkIn(
             qrToken: qrToken,
-            scannerDevice: 'UniPulse Organizer App',
+            scannerDevice: 'UniPulse App',
           );
       setState(() {
         _attendee = attendee;
@@ -113,7 +234,7 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
     try {
       final attendee = await ref.read(attendanceApiProvider).checkOut(
             qrToken: qrToken,
-            scannerDevice: 'UniPulse Organizer App',
+            scannerDevice: 'UniPulse App',
           );
       setState(() {
         _attendee = attendee;
@@ -152,10 +273,6 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_canScan) {
-      return const _ScannerUnavailable();
-    }
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -175,15 +292,47 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
       body: Stack(
         fit: StackFit.expand,
         children: [
-          MobileScanner(controller: _controller, onDetect: _onDetect),
+          MobileScanner(
+            controller: _controller,
+            onDetect: _onDetect,
+            errorBuilder: (context, error, child) {
+              return Container(
+                color: Colors.black,
+                padding: const EdgeInsets.all(32),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.camera_alt_rounded, size: 64, color: Color(0xFF9295A4)),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Camera Access Required',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        error.errorCode == MobileScannerErrorCode.permissionDenied
+                            ? 'Please enable camera permissions in your device settings to scan event posters or attendance QR codes.'
+                            : 'Could not initialize camera: ${error.errorDetails?.message ?? error.errorCode.name}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0xFF9295A4)),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
           _ScannerFrameOverlay(active: _state == _ScanState.scanning),
           if (_state == _ScanState.validating)
-            const _LoadingOverlay(label: 'Validating QR code…'),
+            const _LoadingOverlay(label: 'Processing QR code…'),
           if (_state == _ScanState.actionLoading)
             const _LoadingOverlay(label: 'Updating attendance…'),
           if (_state == _ScanState.attendeeInfo && _attendee != null)
             _AttendeeInfoPanel(
               attendee: _attendee!,
+              canScanAttendance: _canScanAttendance,
               onCheckIn: _checkIn,
               onCheckOut: _checkOut,
               onDismiss: _scanNext,
@@ -213,6 +362,8 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
     switch (reason) {
       case 'INVALID_QR':
         return 'Invalid QR Code';
+      case 'EVENT_NOT_FOUND':
+        return 'Event Not Found';
       case 'ALREADY_CHECKED_IN':
       case 'ALREADY_CHECKED_OUT':
         return 'Duplicate Scan';
@@ -232,37 +383,7 @@ class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
   }
 }
 
-class _ScannerUnavailable extends StatelessWidget {
-  const _ScannerUnavailable();
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('Scan QR Code')),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.qr_code_scanner_rounded, size: 64, color: Color(0xFF9295A4)),
-                SizedBox(height: 16),
-                Text(
-                  'QR scanning is available for event organizers',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'Ask your club\'s organizer or admin if you need to check in attendees.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFF696C7E)),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-}
 
 class _ScannerFrameOverlay extends StatelessWidget {
   const _ScannerFrameOverlay({required this.active});
@@ -326,12 +447,14 @@ class _LoadingOverlay extends StatelessWidget {
 class _AttendeeInfoPanel extends StatelessWidget {
   const _AttendeeInfoPanel({
     required this.attendee,
+    required this.canScanAttendance,
     required this.onCheckIn,
     required this.onCheckOut,
     required this.onDismiss,
   });
 
   final ScannedAttendee attendee;
+  final bool canScanAttendance;
   final VoidCallback onCheckIn;
   final VoidCallback onCheckOut;
   final VoidCallback onDismiss;
@@ -413,37 +536,52 @@ class _AttendeeInfoPanel extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: attendee.checkedIn ? null : onCheckIn,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF22A33A),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
+                if (canScanAttendance)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: attendee.checkedIn ? null : onCheckIn,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF22A33A),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          child: const Text('Check In'),
                         ),
-                        child: const Text('Check In'),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: (attendee.checkedIn && !attendee.checkedOut) ? onCheckOut : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF3A7BFF),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: (attendee.checkedIn && !attendee.checkedOut) ? onCheckOut : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF3A7BFF),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
+                          child: const Text('Check Out'),
                         ),
-                        child: const Text('Check Out'),
                       ),
+                    ],
+                  )
+                else
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: onDismiss,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF5A1A),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text('Scan Next', style: TextStyle(fontWeight: FontWeight.w700)),
                     ),
-                  ],
-                ),
+                  ),
               ],
             ),
           ),

@@ -116,7 +116,7 @@ function bookmarkSetFor(user) {
 }
 
 export const listEvents = asyncHandler(async (req, res) => {
-  const { category, lifecycle, clubId, search, bookmarked, page = 1, limit = 20 } = req.query;
+  const { category, lifecycle, clubId, search, bookmarked, startDate, endDate, page = 1, limit = 20 } = req.query;
   const filter = { collegeId: req.collegeId };
 
   if (category) {
@@ -136,6 +136,22 @@ export const listEvents = asyncHandler(async (req, res) => {
   if (search && search.trim()) {
     const regex = new RegExp(escapeRegex(search.trim()), 'i');
     filter.$or = [{ title: regex }, { description: regex }];
+  }
+
+  if (startDate || endDate) {
+    filter.eventDate = {};
+    if (startDate) {
+      const parsedStart = new Date(startDate);
+      if (!Number.isNaN(parsedStart.getTime())) {
+        filter.eventDate.$gte = parsedStart;
+      }
+    }
+    if (endDate) {
+      const parsedEnd = new Date(endDate);
+      if (!Number.isNaN(parsedEnd.getTime())) {
+        filter.eventDate.$lte = parsedEnd;
+      }
+    }
   }
 
   const pageNum = Math.max(1, Number(page) || 1);

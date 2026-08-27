@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/models/user_role.dart';
+import '../../auth/application/auth_controller.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
-  UserRole get roleFromBackend => UserRole.admin;
-
   @override
-  Widget build(BuildContext context) {
-    final canSeeAdmin = roleFromBackend.canSeeAdminPanel;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(authControllerProvider).user;
+    final canSeeAdmin = user?.role.canSeeAdminPanel ?? false;
+    final roleName = user?.role.name ?? 'student';
+
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.all(18),
@@ -39,26 +41,56 @@ class ProfileScreen extends StatelessWidget {
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
+                    children: [
                       Text(
-                        'Hey, Ehtesham',
-                        style: TextStyle(
+                        user != null
+                            ? 'Hey, ${user.fullName.split(' ').first}'
+                            : 'Hey there',
+                        style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
-                      SizedBox(height: 8),
-                      Text('Second Year, ECS'),
-                      SizedBox(height: 8),
+                      const SizedBox(height: 8),
                       Text(
-                        'VU3F2526129',
-                        style: TextStyle(
-                          color: Color(0xFF22A33A),
-                          fontWeight: FontWeight.w800,
-                        ),
+                        user != null
+                            ? '${_yearLabel(user.year)}, ${user.branch}'
+                            : '',
                       ),
-                      SizedBox(height: 8),
-                      Text('+91 98765 43210'),
+                      if (user != null && user.rollNumber.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          user.rollNumber,
+                          style: const TextStyle(
+                            color: Color(0xFF22A33A),
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Text(user?.phone ?? ''),
+                      if (roleName != 'student') ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFF5A1A).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            roleName == 'superAdmin'
+                                ? 'Super Admin'
+                                : roleName[0].toUpperCase() +
+                                    roleName.substring(1),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFFF5A1A),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -106,11 +138,26 @@ class ProfileScreen extends StatelessWidget {
             icon: Icons.logout_rounded,
             title: 'Logout',
             subtitle: 'Sign out from your account',
-            onTap: () {},
+            onTap: () => ref.read(authControllerProvider.notifier).logout(),
           ),
         ],
       ),
     );
+  }
+
+  static String _yearLabel(int year) {
+    switch (year) {
+      case 1:
+        return '1st Year';
+      case 2:
+        return '2nd Year';
+      case 3:
+        return '3rd Year';
+      case 4:
+        return '4th Year';
+      default:
+        return '${year}th Year';
+    }
   }
 }
 
@@ -145,8 +192,7 @@ class _MenuTile extends StatelessWidget {
             ),
             child: Icon(icon, color: const Color(0xFFFF5A1A)),
           ),
-          title:
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
           subtitle: Text(subtitle),
           trailing: const Icon(Icons.chevron_right_rounded),
           onTap: onTap,

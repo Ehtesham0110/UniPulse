@@ -6,6 +6,7 @@ import '../../../core/widgets/gradient_button.dart';
 import '../../registration/application/registration_providers.dart';
 import '../../registration/presentation/registration_sheet.dart';
 import '../domain/event_summary.dart';
+import '../utils/calendar_export_utils.dart';
 
 class EventDetailScreen extends ConsumerWidget {
   const EventDetailScreen({required this.eventId, super.key});
@@ -100,12 +101,16 @@ class _EventDetailBody extends ConsumerWidget {
                       ),
                       const Spacer(),
                       IconButton(
+                        onPressed: () => CalendarExportUtils.showExportBottomSheet(context, event),
+                        icon: const Icon(Icons.edit_calendar_rounded),
+                        tooltip: 'Export to Calendar',
+                      ),
+                      IconButton(
                         onPressed: () => toggleEventBookmark(ref, event.id),
                         icon: Icon(
                           event.isBookmarked ? Icons.bookmark_rounded : Icons.bookmark_border,
                         ),
                       ),
-                      IconButton(onPressed: () {}, icon: const Icon(Icons.share_rounded)),
                     ],
                   ),
                   const Spacer(),
